@@ -7,6 +7,21 @@
 * **corpus:** rename the source dataset to `dataset/corpus.json` and consolidate each release into
   one `corpus.sqlite` database with book-filtered retrieval.
 
+## [10.6.0](https://github.com/rasagyavatsal/homeoremedica-app/compare/v10.5.0...v10.6.0) (2026-11-15)
+
+
+### Features
+
+* greet an empty chat for the time of day, written out like the name ([b7d85e4](https://github.com/rasagyavatsal/homeoremedica-app/commit/b7d85e478e1d3aab79c238aee23c59fd78f51261))
+* remove the drifting glows behind the greeting ([9e98c04](https://github.com/rasagyavatsal/homeoremedica-app/commit/9e98c04c17bea0275a1ee1de9bc425f8b06bcfa7))
+* set the greeting in Instrument Serif and write it out one line at a time ([f0a2885](https://github.com/rasagyavatsal/homeoremedica-app/commit/f0a288581149d4f3f1fdffc698574064a67b658e))
+* **web:** drop the underline from the name ([5153bd3](https://github.com/rasagyavatsal/homeoremedica-app/commit/5153bd3a3f8ea17a9a21684b5c9812607f23ae9e))
+* **web:** remove the logo and the drop animations, leaving the name ([2bae0b6](https://github.com/rasagyavatsal/homeoremedica-app/commit/2bae0b6bad691dcaa7dc6f9ce02cc7a50be949a0))
+* **web:** set the name in Instrument Serif and write it out with a pen stroke ([7a83b0a](https://github.com/rasagyavatsal/homeoremedica-app/commit/7a83b0a4c9f6970e0fdf0ccbf7ba4cfea685934c))
+* **web:** use an open materia medica with a pressed flower as the logo ([4d3e4d5](https://github.com/rasagyavatsal/homeoremedica-app/commit/4d3e4d5aac08eb281144b9edfeca7018653a88c8))
+* **web:** use the wordmark's italic H as the favicon ([dc13e44](https://github.com/rasagyavatsal/homeoremedica-app/commit/dc13e44bc1caa5a3cd2742c5911df9f6070bafe7))
+* write out the name and a time-of-day greeting in Instrument Serif ([feb92e4](https://github.com/rasagyavatsal/homeoremedica-app/commit/feb92e49938cf9f244791a5b2ea474b2c0695879))
+
 ## [10.5.0](https://github.com/rasagyavatsal/homeoremedica-app/compare/v10.4.0...v10.5.0) (2026-11-14)
 
 
