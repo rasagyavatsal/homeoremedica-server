@@ -62,14 +62,70 @@ server.
 
 ## Deploy
 
+| | Prod | Dev |
+|---|---|---|
+| Project | `homeoremedica` | `homeoremedica-dev-1` |
+| Web (Firebase Hosting) | `https://homeoremedica.com` | `https://homeoremedica-dev-1.web.app` |
+| API (Cloud Run, `asia-south1`) | `https://homeoremedica-619837289655.asia-south1.run.app` | `https://homeoremedica-119730286024.asia-south1.run.app` |
+| Deploys on | a release from `main` | every push to `branch` |
+
 ```sh
-npm run deploy   # Cloud Build, then the homeoremedica Cloud Run service in asia-south1
+npm run deploy                                    # API to prod's Cloud Run service
+GCP_PROJECT=homeoremedica-dev-1 npm run deploy    # API to dev's
+VITE_API_ORIGIN=<API URL> npm run build           # web app that calls that API
+firebase deploy --only hosting --project prod     # or --project dev
 ```
 
-Merging release-please's PR on `main` tags a `v*` release, which runs `npm run check` and the `Deploy`
-workflow; run `Deploy` by hand to redeploy without a release. The service runs one instance, so the
-in-memory rate limits hold. It keeps its configuration between deploys: `QDRANT_URL` and the Firebase
-variables are plain, the other keys come from Secret Manager, and `.env` is not copied into the image.
+Merging release-please's PR on `main` tags a `v*` release, which runs the `Deploy` workflow for prod;
+`Deploy dev` runs it for dev on each push to `branch`. Each project trusts only its own branch through
+its own Workload Identity pool. The service runs one instance, so the in-memory rate limits hold. It
+keeps its configuration between deploys: `QDRANT_URL`, `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY` and
+`WEB_ORIGINS` (the web app's origins, comma-separated) are plain, the other keys come from Secret
+Manager, and `.env` is not copied into the image.
+
+One-time setup of a project `$P` (number `$N`), after creating it, linking billing and adding Firebase:
+
+```sh
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
+  secretmanager.googleapis.com firestore.googleapis.com identitytoolkit.googleapis.com \
+  firebasehosting.googleapis.com iamcredentials.googleapis.com sts.googleapis.com --project $P
+gcloud firestore databases create --location asia-south1 --project $P
+firebase apps:create WEB "HomeoRemedica Web" --project $P
+firebase apps:create ANDROID "HomeoRemedica Android" --package-name com.rasagyavatsal.homeoremedica --project $P
+# Then turn on Email/Password and Google sign-in in the Firebase console.
+
+# Secrets, read by the default compute service account
+for s in OPENROUTER_API_KEY ZAI_API_KEY QDRANT_API_KEY; do
+  gcloud secrets create $s --data-file=- --project $P   # paste the key, then Ctrl-D
+done
+gcloud projects add-iam-policy-binding $P --role roles/secretmanager.secretAccessor \
+  --member serviceAccount:$N-compute@developer.gserviceaccount.com
+
+# First deploy
+GCP_PROJECT=$P npm run deploy -- --allow-unauthenticated \
+  --set-env-vars "^@^QDRANT_URL=...@FIREBASE_PROJECT_ID=$P@FIREBASE_API_KEY=...@WEB_ORIGINS=https://$P.web.app,https://$P.firebaseapp.com" \
+  --set-secrets OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,ZAI_API_KEY=ZAI_API_KEY:latest,QDRANT_API_KEY=QDRANT_API_KEY:latest
+
+# GitHub Actions: only pushes to <branch> may deploy (main for prod, branch for dev)
+gcloud iam workload-identity-pools create github --location global --project $P
+gcloud iam workload-identity-pools providers create-oidc github --workload-identity-pool github \
+  --location global --project $P --issuer-uri https://token.actions.githubusercontent.com \
+  --attribute-mapping google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref \
+  --attribute-condition "assertion.repository == 'rasagyavatsal/homeoremedica-app' && assertion.ref == 'refs/heads/<branch>'"
+gcloud iam service-accounts create github-deployer --project $P
+SA=github-deployer@$P.iam.gserviceaccount.com
+for r in run.sourceDeveloper serviceusage.serviceUsageConsumer logging.viewer firebasehosting.admin; do
+  gcloud projects add-iam-policy-binding $P --role roles/$r --member serviceAccount:$SA
+done
+gcloud iam service-accounts add-iam-policy-binding $SA --project $P --role roles/iam.workloadIdentityUser \
+  --member principalSet://iam.googleapis.com/projects/$N/locations/global/workloadIdentityPools/github/attribute.repository/rasagyavatsal/homeoremedica-app
+gcloud iam service-accounts add-iam-policy-binding $N-compute@developer.gserviceaccount.com --project $P \
+  --role roles/iam.serviceAccountUser --member serviceAccount:$SA
+
+# Sign-in from the web origins
+gcloud services api-keys update <browser key id> --project $P \
+  --allowed-referrers "https://$P.web.app/*,https://$P.firebaseapp.com/*,https://homeoremedica-$N.asia-south1.run.app/*"
+```
 
 ## License
 

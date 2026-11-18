@@ -29,4 +29,9 @@ jobs:
       contents: read
       id-token: write
     uses: ./.github/workflows/deploy.yml
+    with:
+      project: homeoremedica
+      workload_identity_provider: projects/619837289655/locations/global/workloadIdentityPools/github/providers/github
+      service_account: github-deployer@homeoremedica.iam.gserviceaccount.com
+      api_origin: https://homeoremedica-619837289655.asia-south1.run.app
 

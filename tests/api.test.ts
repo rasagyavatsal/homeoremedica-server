@@ -647,6 +647,60 @@ it('returns JSON 404s for unknown API routes', async () => {
   expect(await read(response)).toEqual({ detail: 'Not Found' })
 })
 
+describe('web origins', () => {
+  const ORIGIN = 'https://homeoremedica.com'
+  const app = (webOrigins: string[]) =>
+    createApp({ getService: async () => new StubService(), getWebOrigins: () => webOrigins }, { webDist: null, rateLimiter: null })
+
+  it('lets an allowed origin read the response', async () => {
+    const response = await app([ORIGIN, 'https://homeoremedica.web.app']).request('/api/health', { headers: { Origin: ORIGIN } })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN)
+    expect(response.headers.get('Vary')).toContain('Origin')
+  })
+
+  it('lets an allowed origin read a streamed answer and an error', async () => {
+    const chat = await app([ORIGIN]).request('/api/chat', {
+      method: 'POST',
+      headers: { Origin: ORIGIN, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({ message: 'Remedy for fever?', history: [] }),
+    })
+    const missing = await app([ORIGIN]).request('/api/missing', { headers: { Origin: ORIGIN } })
+
+    expect(chat.headers.get('Content-Type')).toContain('text/event-stream')
+    expect(chat.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN)
+    expect(missing.status).toBe(404)
+    expect(missing.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN)
+  })
+
+  it('does not let any other origin read the response', async () => {
+    const response = await app([ORIGIN]).request('/api/health', { headers: { Origin: 'https://example.com' } })
+
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull()
+  })
+
+  it('answers the preflight check for signed-in requests', async () => {
+    const response = await app([ORIGIN]).request('/api/chats/chat-1', {
+      method: 'OPTIONS',
+      headers: { Origin: ORIGIN, 'Access-Control-Request-Method': 'PUT', 'Access-Control-Request-Headers': 'authorization,content-type' },
+    })
+
+    expect(response.status).toBe(204)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN)
+    expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET,POST,PUT,DELETE')
+    expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization,Content-Type')
+    expect(response.headers.get('Access-Control-Max-Age')).toBe('7200')
+  })
+
+  it('sends no CORS headers when no origins are set', async () => {
+    const response = await app([]).request('/api/health', { headers: { Origin: ORIGIN } })
+
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull()
+    expect(response.headers.get('Vary')).toBeNull()
+  })
+})
+
 describe('production dependencies', () => {
   const settings: Settings = {
     qdrantUrl: 'https://qdrant.example',
@@ -658,6 +712,7 @@ describe('production dependencies', () => {
     firebaseProjectId: undefined,
     firebaseApiKey: undefined,
     firebaseAuthDomain: undefined,
+    webOrigins: [],
   }
 
   it('builds the service once, even for concurrent requests', async () => {
@@ -680,6 +735,12 @@ describe('production dependencies', () => {
     await expect(dependencies.getService()).rejects.toThrow(CorpusError)
     expect(await dependencies.getService()).toBe(stub)
     expect(build).toHaveBeenCalledTimes(2)
+  })
+
+  it('reads the web origins from the settings', () => {
+    const dependencies = productionDependencies({ settings: () => ({ ...settings, webOrigins: ['https://homeoremedica.com'] }) })
+
+    expect(dependencies.getWebOrigins?.()).toEqual(['https://homeoremedica.com'])
   })
 })
 
