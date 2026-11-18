@@ -7,6 +7,15 @@
 * **corpus:** rename the source dataset to `dataset/corpus.json` and consolidate each release into
   one `corpus.sqlite` database with book-filtered retrieval.
 
+## [10.7.0](https://github.com/rasagyavatsal/homeoremedica-app/compare/v10.6.0...v10.7.0) (2026-11-18)
+
+
+### Features
+
+* serve the web app from Firebase Hosting with a dev deploy ([e11be47](https://github.com/rasagyavatsal/homeoremedica-app/commit/e11be47a9c3e28f91153f1e36ce604c93c146b41))
+* **server:** allow the web app's origins through CORS ([97a1b04](https://github.com/rasagyavatsal/homeoremedica-app/commit/97a1b04081d26330c2ea57eff795eca2190a29c5))
+* **web:** call the API at a build-time origin ([7ed481e](https://github.com/rasagyavatsal/homeoremedica-app/commit/7ed481e1ee83e091a56a2799583592ffe37d4617))
+
 ## [10.6.0](https://github.com/rasagyavatsal/homeoremedica-app/compare/v10.5.0...v10.6.0) (2026-11-15)
 
 
