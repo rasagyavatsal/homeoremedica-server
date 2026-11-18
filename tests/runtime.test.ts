@@ -36,6 +36,7 @@ describe('settings', () => {
       firebaseProjectId: undefined,
       firebaseApiKey: undefined,
       firebaseAuthDomain: undefined,
+      webOrigins: [],
     })
   })
 
@@ -49,6 +50,12 @@ describe('settings', () => {
     expect(settings.maxOutputTokens).toBe(1_024)
     expect(settings.zaiApiKey).toBe('env-key')
     expect(settings.qdrantUrl).toBeUndefined()
+  })
+
+  it('reads the web origins as a comma-separated list', () => {
+    const settings = loadSettings({ WEB_ORIGINS: 'https://homeoremedica.com, https://homeoremedica.web.app,' }, directory)
+
+    expect(settings.webOrigins).toEqual(['https://homeoremedica.com', 'https://homeoremedica.web.app'])
   })
 
   it.each(['0', '4097', 'many', '12.5'])('rejects RAG_MAX_OUTPUT_TOKENS=%s', (value) => {

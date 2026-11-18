@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { type Context, Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
+import { cors } from 'hono/cors'
 import { createMiddleware } from 'hono/factory'
 import { streamSSE } from 'hono/streaming'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
@@ -60,6 +61,8 @@ export interface AppDependencies {
   getService: () => Promise<ChatHandler>
   /** Sign-in and saved chats, or null when this server has no accounts. */
   getAccounts?: () => Accounts | null
+  /** Origins of web pages served elsewhere that may call the API; none means same-origin only. */
+  getWebOrigins?: () => readonly string[]
 }
 
 interface SignedIn {
@@ -94,8 +97,10 @@ export function productionDependencies({
 } = {}): AppDependencies {
   let service: Promise<ChatHandler> | undefined
   let accounts: Accounts | null | undefined
+  let webOrigins: readonly string[] | undefined
   return {
     getAccounts: () => (accounts ??= loadAccounts(settings())),
+    getWebOrigins: () => (webOrigins ??= settings().webOrigins),
     getService() {
       // Share one in-flight build between concurrent requests. Conversation state stays in
       // the request and is never shared between browser sessions.
@@ -144,6 +149,18 @@ export function createApp(
   } = {},
 ): Hono {
   const app = new Hono()
+
+  // The web app hosted on another origin calls the API across origins. With none set, no CORS headers are sent.
+  app.use('/api/*', async (c, next) => {
+    const origins = dependencies.getWebOrigins?.() ?? []
+    if (!origins.length) return next()
+    return cors({
+      origin: [...origins],
+      allowMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+      allowHeaders: ['Authorization', 'Content-Type'],
+      maxAge: 7200,
+    })(c, next)
+  })
 
   app.get('/api/health', (c) => c.json({ status: 'ok' }))
 

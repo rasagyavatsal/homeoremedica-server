@@ -40,6 +40,8 @@ export interface Settings {
   firebaseProjectId: string | undefined
   firebaseApiKey: string | undefined
   firebaseAuthDomain: string | undefined
+  /** Origins of web pages served elsewhere that may call the API. */
+  webOrigins: string[]
 }
 
 /**
@@ -70,6 +72,7 @@ export function loadSettings(
     firebaseProjectId: value('FIREBASE_PROJECT_ID'),
     firebaseApiKey: value('FIREBASE_API_KEY'),
     firebaseAuthDomain: value('FIREBASE_AUTH_DOMAIN'),
+    webOrigins: (value('WEB_ORIGINS') ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
   }
 }
 
