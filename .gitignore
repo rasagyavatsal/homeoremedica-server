@@ -47,3 +47,6 @@ CLAUDE.md
 test-results/
 playwright-report/
 blob-report/
+
+# Firebase CLI cache
+.firebase/
