@@ -1,0 +1,19 @@
+name: Deploy dev
+
+on:
+  push:
+    branches:
+      - branch
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+    with:
+      project: homeoremedica-dev-1
+      workload_identity_provider: projects/119730286024/locations/global/workloadIdentityPools/github/providers/github
+      service_account: github-deployer@homeoremedica-dev-1.iam.gserviceaccount.com
+      api_origin: https://homeoremedica-119730286024.asia-south1.run.app
