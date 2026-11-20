@@ -7,6 +7,17 @@
 * **corpus:** rename the source dataset to `dataset/corpus.json` and consolidate each release into
   one `corpus.sqlite` database with book-filtered retrieval.
 
+## [11.0.0](https://github.com/rasagyavatsal/homeoremedica-server/compare/v10.7.0...v11.0.0) (2026-11-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* the server serves only /api; requests outside it return 404.
+
+### Features
+
+* serve only the API ([220ca1b](https://github.com/rasagyavatsal/homeoremedica-server/commit/220ca1b660787cccbbd00c9d9b37edab175fa333))
+
 ## [10.7.0](https://github.com/rasagyavatsal/homeoremedica-app/compare/v10.6.0...v10.7.0) (2026-11-18)
 
 
