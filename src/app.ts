@@ -1,9 +1,5 @@
 /** HTTP interface to the production HomeoRemedica chat pipeline. */
 
-import { existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-
-import { serveStatic } from '@hono/node-server/serve-static'
 import { type Context, Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
@@ -76,10 +72,6 @@ const FAILURE_STATUS: Record<FailureKind, ContentfulStatusCode> = {
   internal: 500,
 }
 
-// `npm start` serves the built frontend too. During development Vite serves both.
-export const WEB_DIST = fileURLToPath(new URL('../../dist', import.meta.url))
-const LEGAL_PAGES = ['/privacy', '/terms']
-
 const ACCOUNT_FAILURE = 'Your saved chats could not be reached. Please try again.'
 const CHAT_ID = /^[A-Za-z0-9_-]{1,64}$/
 // A long chat with every answer's sources fits well within this.
@@ -118,7 +110,6 @@ export function productionDependencies({
 export function createApp(
   dependencies: AppDependencies = productionDependencies(),
   {
-    webDist = WEB_DIST,
     rateLimiter = new RateLimiter(),
     totalRateLimiter = new RateLimiter(TOTAL_CHAT_RATE_LIMITS),
     kindRateLimiter = new RateLimiter(),
@@ -130,7 +121,6 @@ export function createApp(
     saveRateLimiter = new RateLimiter(CHAT_SAVE_RATE_LIMITS),
     feedbackRateLimiter = new RateLimiter(FEEDBACK_RATE_LIMITS),
   }: {
-    webDist?: string | null
     rateLimiter?: RateLimiter | null
     totalRateLimiter?: RateLimiter | null
     /** Counts the questions each client has had sorted into cases and others, apart from its questions. */
@@ -391,13 +381,6 @@ export function createApp(
 
   app.all('/api/*', (c) => c.json({ detail: 'Not Found' }, 404))
 
-  if (webDist && existsSync(`${webDist}/index.html`)) {
-    app.use('/*', webCache)
-    // The legal pages are views of the web app, so they serve its page.
-    for (const page of LEGAL_PAGES) app.get(page, serveStatic({ root: webDist, path: 'index.html' }))
-    app.use('/*', serveStatic({ root: webDist }))
-  }
-
   app.onError((error, c) => {
     console.error('Unhandled API error', error)
     const accountRoute = /^\/api\/(chats|account)(\/|$)/.test(c.req.path)
@@ -406,14 +389,6 @@ export function createApp(
 
   return app
 }
-
-// Vite names every file under /assets/ after its contents, so a file there never changes and can be
-// kept for a year. The page itself names the current files, so it is checked on every visit.
-const webCache = createMiddleware(async (c, next) => {
-  await next()
-  if (!c.res.ok) return
-  c.header('Cache-Control', c.req.path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache')
-})
 
 // Cloud Run appends the connecting address to X-Forwarded-For, so a client cannot forge the last
 // entry. Without a proxy in front, every client shares one limit.

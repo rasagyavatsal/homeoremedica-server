@@ -1,6 +1,6 @@
 /**
- * The app as the end-to-end tests drive it: the built frontend and the real API, with scripted
- * answers in place of the providers and accounts in the Firebase emulators.
+ * The API as the end-to-end tests drive it: the real API, with scripted answers in place of the
+ * providers and accounts in the Firebase emulators. The web app's tests call it from their own page.
  */
 
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -33,6 +33,7 @@ import {
   SLOW,
   SOURCES,
   SUMMARY_PREFIX,
+  WEB_E2E_URL,
   answerTo,
 } from './scenario.ts'
 
@@ -89,7 +90,7 @@ const accounts = firebaseAccounts({
   emulator: `http://${AUTH_EMULATOR}`,
 })
 const app = createApp(
-  { getService: async () => service, getAccounts: () => accounts },
+  { getService: async () => service, getAccounts: () => accounts, getWebOrigins: () => [WEB_E2E_URL] },
   { rateLimiter: new RateLimiter([{ limit: CHAT_LIMIT, windowMs: 60_000 }]), totalRateLimiter: null, kindRateLimiter: null, symptomRateLimiter: null, diseaseRateLimiter: null },
 )
 
