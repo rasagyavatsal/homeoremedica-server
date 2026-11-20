@@ -1,6 +1,6 @@
-import type { Accounts, ChatStore, FeedbackStore } from '../src/server/accounts.ts'
-import type { ChatSummary, Feedback, SavedChat, SavedConversation } from '../src/server/contracts.ts'
-import type { Fetch } from '../src/server/http.ts'
+import type { Accounts, ChatStore, FeedbackStore } from '../src/accounts.ts'
+import type { ChatSummary, Feedback, SavedChat, SavedConversation } from '../src/contracts.ts'
+import type { Fetch } from '../src/http.ts'
 
 export interface FetchCall {
   url: string

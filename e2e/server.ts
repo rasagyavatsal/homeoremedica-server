@@ -7,8 +7,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { serve } from '@hono/node-server'
 
-import { firebaseAccounts } from '../src/server/accounts.ts'
-import { type ChatHandler, createApp } from '../src/server/app.ts'
+import { firebaseAccounts } from '../src/accounts.ts'
+import { type ChatHandler, createApp } from '../src/app.ts'
 import type {
   ChatOptions,
   ChatRequest,
@@ -16,10 +16,10 @@ import type {
   CompactRequest,
   CompactResponse,
   QuestionKind,
-} from '../src/server/contracts.ts'
-import { shouldCompact } from '../src/server/conversation.ts'
-import { ProviderTimeoutError } from '../src/server/errors.ts'
-import { RateLimiter } from '../src/server/rate-limit.ts'
+} from '../src/contracts.ts'
+import { shouldCompact } from '../src/conversation.ts'
+import { ProviderTimeoutError } from '../src/errors.ts'
+import { RateLimiter } from '../src/rate-limit.ts'
 import {
   API_KEY,
   AUTH_EMULATOR,

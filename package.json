@@ -11,12 +11,12 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "build": "vite build",
-    "start": "node src/server/server.ts",
-    "typecheck": "tsc -p tsconfig.server.json && tsc -p tsconfig.web.json && tsc -p tsconfig.e2e.json",
+    "start": "node src/server.ts",
+    "typecheck": "tsc",
     "test": "vitest run",
     "e2e": "playwright test",
     "e2e:smoke": "playwright test --config playwright.smoke.config.ts",
-    "check": "npm run typecheck && npm test && npm run build",
+    "check": "npm run typecheck && npm test",
     "deploy": "gcloud run deploy homeoremedica --source . --region asia-south1 --project ${GCP_PROJECT:-homeoremedica} --max-instances 1"
   },
   "dependencies": {

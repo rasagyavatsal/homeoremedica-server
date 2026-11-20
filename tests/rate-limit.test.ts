@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 
-import { RateLimiter, clientKey } from '../src/server/rate-limit.ts'
+import { RateLimiter, clientKey } from '../src/rate-limit.ts'
 
 function limiter() {
   let now = 0

@@ -4,10 +4,10 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { type AppDependencies, type ChatHandler, createApp, productionDependencies } from '../src/server/app.ts'
-import { BOOKS, CorpusError } from '../src/server/qdrant.ts'
-import { RateLimiter } from '../src/server/rate-limit.ts'
-import type { Settings } from '../src/server/runtime.ts'
+import { type AppDependencies, type ChatHandler, createApp, productionDependencies } from '../src/app.ts'
+import { BOOKS, CorpusError } from '../src/qdrant.ts'
+import { RateLimiter } from '../src/rate-limit.ts'
+import type { Settings } from '../src/runtime.ts'
 import type {
   BookSummary,
   Cancellable,
@@ -17,8 +17,8 @@ import type {
   CompactRequest,
   CompactResponse,
   QuestionKind,
-} from '../src/server/contracts.ts'
-import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/server/errors.ts'
+} from '../src/contracts.ts'
+import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
 
 const BOOK: BookSummary = { bookId: 'kent_lectures', title: "Kent's Lectures", author: 'Kent' }
 const INTERNAL = 'Something went wrong while preparing the answer. Please try again.'

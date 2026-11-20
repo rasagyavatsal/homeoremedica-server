@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { ChatRequestSchema, type ChatRequest } from '../src/server/contracts.ts'
-import { ProviderError } from '../src/server/errors.ts'
+import { ChatRequestSchema, type ChatRequest } from '../src/contracts.ts'
+import { ProviderError } from '../src/errors.ts'
 import {
   CombinedRubrics,
   MAX_SYMPTOMS,
@@ -18,8 +18,8 @@ import {
   parseSymptoms,
   rankRemedies,
   standingOut,
-} from '../src/server/repertory.ts'
-import { ProductionRetriever, type SearchableRelease } from '../src/server/retrieval.ts'
+} from '../src/repertory.ts'
+import { ProductionRetriever, type SearchableRelease } from '../src/retrieval.ts'
 import { fakeFetch, json } from './fakes.ts'
 
 const rubric = (text: string, ...remedies: [string, number][]): Rubric => ({

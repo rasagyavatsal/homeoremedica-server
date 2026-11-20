@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createApp } from '../src/server/app.ts'
-import { type Feedback, MAX_SAVED_MESSAGES, type SavedChat } from '../src/server/contracts.ts'
-import { RateLimiter } from '../src/server/rate-limit.ts'
+import { createApp } from '../src/app.ts'
+import { type Feedback, MAX_SAVED_MESSAGES, type SavedChat } from '../src/contracts.ts'
+import { RateLimiter } from '../src/rate-limit.ts'
 import { fakeAccounts } from './fakes.ts'
 
 const unexpected = () => {

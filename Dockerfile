@@ -10,8 +10,8 @@ WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY src/server ./src/server
+COPY src ./src
 COPY --from=build /app/dist ./dist
 USER node
 EXPOSE 8080
-CMD ["node", "src/server/server.ts"]
+CMD ["node", "src/server.ts"]

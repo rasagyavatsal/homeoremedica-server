@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { ProductionRetriever, type SearchableRelease } from '../src/server/retrieval.ts'
+import { ProductionRetriever, type SearchableRelease } from '../src/retrieval.ts'
 import {
   type AnswerGenerator,
   type ChatRequest,
@@ -9,10 +9,10 @@ import {
   type QuestionKind,
   type Retrieval,
   type Retriever,
-} from '../src/server/contracts.ts'
-import { ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/server/errors.ts'
-import { COMPACTION_INSTRUCTION } from '../src/server/generation.ts'
-import { ChatService } from '../src/server/service.ts'
+} from '../src/contracts.ts'
+import { ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
+import { COMPACTION_INSTRUCTION } from '../src/generation.ts'
+import { ChatService } from '../src/service.ts'
 
 const request = (input: Record<string, unknown>): ChatRequest => ChatRequestSchema.parse(input)
 

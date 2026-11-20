@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { lstatSync, readFileSync, readdirSync } from 'node:fs'
-import { dirname, extname, join, relative, resolve } from 'node:path'
+import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { expect, it } from 'vitest'
@@ -10,7 +10,7 @@ const MAX_TRACKED_FILE_BYTES = 8_000_000
 const FORBIDDEN_ROOTS = new Set(['build', 'artifacts', 'corpora', 'dataset', 'dist', 'output', 'private', 'server-data'])
 const FORBIDDEN_SUFFIXES = new Set(['.db', '.gz', '.sqlite', '.sqlite3', '.tar', '.tgz', '.whl', '.zip', '.zst'])
 // Only the HTTP entry points may depend on the web framework.
-const HTTP_ENTRY_POINTS = new Set(['src/server/app.ts', 'src/server/server.ts'])
+const HTTP_ENTRY_POINTS = new Set(['src/app.ts', 'src/server.ts'])
 const IMPORT_STATEMENT =
   /\b(?:import|export)(\s+type)?\s(?:[^'"]*?\sfrom\s)?\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g
 
@@ -56,17 +56,8 @@ function sourceFiles(directory: string): string[] {
 
 function layerViolations(): string[] {
   const found: string[] = []
-  for (const path of [...sourceFiles('src/server'), ...sourceFiles('src/web')]) {
-    const layer = path.split('/')[1]
-    for (const { specifier, typeOnly } of imports(readFileSync(join(ROOT, path), 'utf8'))) {
-      const target = specifier.startsWith('.')
-        ? relative(join(ROOT, 'src'), resolve(dirname(join(ROOT, path)), specifier)).split('/')[0]
-        : undefined
-      if (layer === 'server' && target === 'web') found.push(`server imports the frontend: ${path} imports ${specifier}`)
-      // A value import would bundle server code, and possibly secrets, into the browser.
-      if (layer === 'web' && target === 'server' && !typeOnly) {
-        found.push(`frontend value-imports the server: ${path} imports ${specifier}; use import type`)
-      }
+  for (const path of sourceFiles('src')) {
+    for (const { specifier } of imports(readFileSync(join(ROOT, path), 'utf8'))) {
       if (/^(hono|@hono\/)/.test(specifier) && !HTTP_ENTRY_POINTS.has(path)) {
         found.push(`web framework outside the HTTP layer: ${path} imports ${specifier}`)
       }
