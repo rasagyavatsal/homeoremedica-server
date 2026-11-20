@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { VOYAGE_DIMENSIONS, VoyageQueryEmbedder } from '../src/server/embeddings.ts'
-import { BOOKS, CorpusError, QdrantCorpus } from '../src/server/qdrant.ts'
-import { ProviderTimeoutError } from '../src/server/errors.ts'
+import { VOYAGE_DIMENSIONS, VoyageQueryEmbedder } from '../src/embeddings.ts'
+import { BOOKS, CorpusError, QdrantCorpus } from '../src/qdrant.ts'
+import { ProviderTimeoutError } from '../src/errors.ts'
 import { fakeFetch, json, timeout } from './fakes.ts'
 
 const PAYLOAD = {

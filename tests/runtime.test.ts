@@ -4,9 +4,9 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { loadCorpus, loadSettings } from '../src/server/runtime.ts'
-import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/server/errors.ts'
-import { DEFAULT_ZAI_BASE_URL, ZaiChatClient } from '../src/server/generation.ts'
+import { loadCorpus, loadSettings } from '../src/runtime.ts'
+import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
+import { DEFAULT_ZAI_BASE_URL, ZaiChatClient } from '../src/generation.ts'
 import { fakeFetch, json, sse, stream, timeout } from './fakes.ts'
 
 describe('settings', () => {

@@ -2,6 +2,9 @@
 
 export const E2E_PORT = 8100
 export const E2E_URL = `http://127.0.0.1:${E2E_PORT}`
+/** Where the web app's end-to-end tests serve the page that calls the e2e server. */
+export const WEB_E2E_PORT = 8102
+export const WEB_E2E_URL = `http://127.0.0.1:${WEB_E2E_PORT}`
 
 // A `demo-` project runs only in the emulators and needs no Firebase project.
 export const PROJECT_ID = 'demo-homeoremedica'

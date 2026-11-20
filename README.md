@@ -1,13 +1,14 @@
-# HomeoRemedica
+# HomeoRemedica API
 
-Retrieval-augmented chat over seven historical homoeopathic books (Allen, Boericke, Clarke, Hahnemann,
-Kent) that answers with cited passages. Historical reference only; not medical advice.
+The API behind HomeoRemedica: retrieval-augmented chat over seven historical homoeopathic books (Allen,
+Boericke, Clarke, Hahnemann, Kent) that answers with cited passages. Historical reference only; not
+medical advice.
 
-**Live:** <https://homeoremedica-619837289655.asia-south1.run.app>
+**Live:** <https://homeoremedica-619837289655.asia-south1.run.app/api/health>
 
-This repository is the Hono API (`src/server`) and the React web app (`src/web`). The Qdrant collections
-come from [homeoremedica-private](https://github.com/rasagyavatsal/homeoremedica-private); the Android
-client is [homeoremedica-android](https://github.com/rasagyavatsal/homeoremedica-android).
+The web app is [homeoremedica-web](https://github.com/rasagyavatsal/homeoremedica-web) and the Android
+client [homeoremedica-android](https://github.com/rasagyavatsal/homeoremedica-android). The Qdrant
+collections come from [homeoremedica-private](https://github.com/rasagyavatsal/homeoremedica-private).
 
 ## Setup
 
@@ -31,6 +32,7 @@ gcloud auth application-default login     # only for saved chats locally (Firest
 | `FIREBASE_PROJECT_ID` | None | With `FIREBASE_API_KEY`, turns on sign-in and saved chats. |
 | `FIREBASE_API_KEY` | None | Public browser key for Firebase Authentication. |
 | `FIREBASE_AUTH_DOMAIN` | `<project>.firebaseapp.com` | Hosts the Google sign-in pop-up. |
+| `WEB_ORIGINS` | None | Web app origins allowed through CORS, comma-separated. |
 | `HOST` | `127.0.0.1` | Address `npm start` listens on. |
 | `PORT` | `8000` | Port `npm start` listens on. |
 
@@ -39,26 +41,26 @@ Variables come from the environment, `.env` and `.env.local`.
 ## Run
 
 ```sh
-npm run dev                 # frontend and API on http://127.0.0.1:5173; restart after editing .env
-npm run build && npm start  # built frontend and API on http://127.0.0.1:8000
+npm run dev     # API on http://127.0.0.1:8000, restarting on edits; restart after editing .env
+npm start       # the same, without watching
+curl http://127.0.0.1:8000/api/health
 ```
 
-Port 5173 must be free; Vite fails rather than switching ports. The API's routes are in
-`src/server/app.ts` and its request and response shapes in `src/server/contracts.ts`.
+The routes are in `src/app.ts` and the request and response shapes in `src/contracts.ts`. The web repo
+keeps a copy of `src/contracts.ts` and its deploy fails when the two differ.
 
 ## Test
 
 ```sh
-npm run check                     # type-check, unit tests (fakes, no keys or Qdrant), build
-npx playwright install chromium   # once, before the e2e tests
-npm run e2e                       # built app in Chromium, desktop and phone sizes
-npm run e2e -- --ui               # the same, watching them run
-npm run e2e:smoke                 # one real question to production with the keys in .env
+npm run check         # type-check and unit tests (fakes, no keys or Qdrant)
+node e2e/server.ts    # e2e API on http://127.0.0.1:8100 with scripted answers
+npx --yes firebase-tools@15.32.1 emulators:start --config e2e/firebase.json \
+  --project demo-homeoremedica --only auth,firestore   # accounts for the e2e API
 ```
 
-`npm run e2e` needs no keys: `e2e/server.ts` scripts the answers, and Playwright starts the Firebase Auth
-and Firestore emulators on ports 9099 and 8086, which need Java 21+. Android's e2e tests use the same
-server.
+The e2e server needs no keys. It and the Firebase Auth and Firestore emulators (ports 9099 and 8086,
+Java 21+) are what the web app's `npm run e2e` and Android's `./e2e.sh` start from a sibling
+`../homeoremedica-server` checkout. `e2e/scenario.ts` holds what they agree on.
 
 ## Deploy
 
@@ -72,18 +74,17 @@ server.
 ```sh
 npm run deploy                                    # API to prod's Cloud Run service
 GCP_PROJECT=homeoremedica-dev-1 npm run deploy    # API to dev's
-VITE_API_ORIGIN=<API URL> npm run build           # web app that calls that API
-firebase deploy --only hosting --project prod     # or --project dev
 ```
 
 Merging release-please's PR on `main` tags a `v*` release, which runs the `Deploy` workflow for prod;
-`Deploy dev` runs it for dev on each push to `branch`. Each project trusts only its own branch through
-its own Workload Identity pool. The service runs one instance, so the in-memory rate limits hold. It
+`Deploy dev` runs it for dev on each push to `branch`. The web repo deploys Hosting the same way. Each
+project trusts only its own branch of the two repos through its own Workload Identity pool. The service runs one instance, so the in-memory rate limits hold. It
 keeps its configuration between deploys: `QDRANT_URL`, `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY` and
 `WEB_ORIGINS` (the web app's origins, comma-separated) are plain, the other keys come from Secret
 Manager, and `.env` is not copied into the image.
 
-One-time setup of a project `$P` (number `$N`), after creating it, linking billing and adding Firebase:
+One-time setup of a project `$P` (number `$N`), shared with the web app, after creating it, linking
+billing and adding Firebase:
 
 ```sh
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
@@ -111,14 +112,16 @@ gcloud iam workload-identity-pools create github --location global --project $P
 gcloud iam workload-identity-pools providers create-oidc github --workload-identity-pool github \
   --location global --project $P --issuer-uri https://token.actions.githubusercontent.com \
   --attribute-mapping google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref \
-  --attribute-condition "assertion.repository == 'rasagyavatsal/homeoremedica-app' && assertion.ref == 'refs/heads/<branch>'"
+  --attribute-condition "assertion.repository in ['rasagyavatsal/homeoremedica-server', 'rasagyavatsal/homeoremedica-web'] && assertion.ref == 'refs/heads/<branch>'"
 gcloud iam service-accounts create github-deployer --project $P
 SA=github-deployer@$P.iam.gserviceaccount.com
 for r in run.sourceDeveloper serviceusage.serviceUsageConsumer logging.viewer firebasehosting.admin; do
   gcloud projects add-iam-policy-binding $P --role roles/$r --member serviceAccount:$SA
 done
-gcloud iam service-accounts add-iam-policy-binding $SA --project $P --role roles/iam.workloadIdentityUser \
-  --member principalSet://iam.googleapis.com/projects/$N/locations/global/workloadIdentityPools/github/attribute.repository/rasagyavatsal/homeoremedica-app
+for repo in homeoremedica-server homeoremedica-web; do
+  gcloud iam service-accounts add-iam-policy-binding $SA --project $P --role roles/iam.workloadIdentityUser \
+    --member principalSet://iam.googleapis.com/projects/$N/locations/global/workloadIdentityPools/github/attribute.repository/rasagyavatsal/$repo
+done
 gcloud iam service-accounts add-iam-policy-binding $N-compute@developer.gserviceaccount.com --project $P \
   --role roles/iam.serviceAccountUser --member serviceAccount:$SA
 

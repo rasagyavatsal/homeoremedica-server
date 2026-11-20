@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createApp } from '../src/server/app.ts'
-import { type Feedback, MAX_SAVED_MESSAGES, type SavedChat } from '../src/server/contracts.ts'
-import { RateLimiter } from '../src/server/rate-limit.ts'
+import { createApp } from '../src/app.ts'
+import { type Feedback, MAX_SAVED_MESSAGES, type SavedChat } from '../src/contracts.ts'
+import { RateLimiter } from '../src/rate-limit.ts'
 import { fakeAccounts } from './fakes.ts'
 
 const unexpected = () => {
@@ -13,7 +13,7 @@ function setup(saveRateLimiter: RateLimiter | null = null, feedbackRateLimiter: 
   const accounts = fakeAccounts()
   const app = createApp(
     { getService: unexpected, getAccounts: () => accounts },
-    { webDist: null, rateLimiter: null, saveRateLimiter, feedbackRateLimiter },
+    { rateLimiter: null, saveRateLimiter, feedbackRateLimiter },
   )
   const request = (method: string, path: string, { user = 'alice', body }: { user?: string | null; body?: unknown } = {}) =>
     app.request(path, {
@@ -49,7 +49,7 @@ describe('client config', () => {
   })
 
   it('has no sign-in when accounts are not configured', async () => {
-    const app = createApp({ getService: unexpected }, { webDist: null, rateLimiter: null })
+    const app = createApp({ getService: unexpected }, { rateLimiter: null })
 
     expect(await read(await app.request('/api/config'))).toEqual({ auth: null })
     const response = await app.request('/api/chats', { headers: { Authorization: 'Bearer token-alice' } })

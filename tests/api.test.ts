@@ -1,13 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { type AppDependencies, type ChatHandler, createApp, productionDependencies } from '../src/server/app.ts'
-import { BOOKS, CorpusError } from '../src/server/qdrant.ts'
-import { RateLimiter } from '../src/server/rate-limit.ts'
-import type { Settings } from '../src/server/runtime.ts'
+import { type AppDependencies, type ChatHandler, createApp, productionDependencies } from '../src/app.ts'
+import { BOOKS, CorpusError } from '../src/qdrant.ts'
+import { RateLimiter } from '../src/rate-limit.ts'
+import type { Settings } from '../src/runtime.ts'
 import type {
   BookSummary,
   Cancellable,
@@ -17,8 +14,8 @@ import type {
   CompactRequest,
   CompactResponse,
   QuestionKind,
-} from '../src/server/contracts.ts'
-import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/server/errors.ts'
+} from '../src/contracts.ts'
+import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
 
 const BOOK: BookSummary = { bookId: 'kent_lectures', title: "Kent's Lectures", author: 'Kent' }
 const INTERNAL = 'Something went wrong while preparing the answer. Please try again.'
@@ -101,7 +98,6 @@ function setup(
       ...overrides,
     },
     {
-      webDist: null,
       rateLimiter,
       totalRateLimiter,
       kindRateLimiter: null,
@@ -650,7 +646,7 @@ it('returns JSON 404s for unknown API routes', async () => {
 describe('web origins', () => {
   const ORIGIN = 'https://homeoremedica.com'
   const app = (webOrigins: string[]) =>
-    createApp({ getService: async () => new StubService(), getWebOrigins: () => webOrigins }, { webDist: null, rateLimiter: null })
+    createApp({ getService: async () => new StubService(), getWebOrigins: () => webOrigins }, { rateLimiter: null })
 
   it('lets an allowed origin read the response', async () => {
     const response = await app([ORIGIN, 'https://homeoremedica.web.app']).request('/api/health', { headers: { Origin: ORIGIN } })
@@ -741,43 +737,5 @@ describe('production dependencies', () => {
     const dependencies = productionDependencies({ settings: () => ({ ...settings, webOrigins: ['https://homeoremedica.com'] }) })
 
     expect(dependencies.getWebOrigins?.()).toEqual(['https://homeoremedica.com'])
-  })
-})
-
-describe('web app', () => {
-  it('serves its page at the legal paths', async () => {
-    const webDist = mkdtempSync(join(tmpdir(), 'homeoremedica-web-'))
-    try {
-      writeFileSync(join(webDist, 'index.html'), '<div id="root"></div>')
-      const app = createApp({ getService: async () => new StubService() }, { webDist, rateLimiter: null })
-
-      for (const path of ['/privacy', '/terms']) {
-        const response = await app.request(path)
-        expect(response.status).toBe(200)
-        expect(await response.text()).toBe('<div id="root"></div>')
-      }
-      expect((await app.request('/elsewhere')).status).toBe(404)
-    } finally {
-      rmSync(webDist, { recursive: true, force: true })
-    }
-  })
-
-  it('keeps built assets for a year and checks the page on every visit', async () => {
-    const webDist = mkdtempSync(join(tmpdir(), 'homeoremedica-web-'))
-    try {
-      writeFileSync(join(webDist, 'index.html'), '<div id="root"></div>')
-      mkdirSync(join(webDist, 'assets'))
-      writeFileSync(join(webDist, 'assets', 'index-abc123.js'), 'console.log(1)')
-      const app = createApp({ getService: async () => new StubService() }, { webDist, rateLimiter: null })
-
-      const asset = await app.request('/assets/index-abc123.js')
-      expect(asset.status).toBe(200)
-      expect(asset.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable')
-      for (const path of ['/', '/index.html', '/privacy']) {
-        expect((await app.request(path)).headers.get('Cache-Control')).toBe('no-cache')
-      }
-    } finally {
-      rmSync(webDist, { recursive: true, force: true })
-    }
   })
 })

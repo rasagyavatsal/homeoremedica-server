@@ -11,11 +11,11 @@ import {
   loadClinicalTerms,
   parseDiseases,
   termWords,
-} from '../src/server/clinical.ts'
-import { ChatRequestSchema } from '../src/server/contracts.ts'
-import { ProviderError } from '../src/server/errors.ts'
-import type { Repertoriser } from '../src/server/repertory.ts'
-import { ProductionRetriever, type SearchableRelease } from '../src/server/retrieval.ts'
+} from '../src/clinical.ts'
+import { ChatRequestSchema } from '../src/contracts.ts'
+import { ProviderError } from '../src/errors.ts'
+import type { Repertoriser } from '../src/repertory.ts'
+import { ProductionRetriever, type SearchableRelease } from '../src/retrieval.ts'
 import { fakeFetch, json } from './fakes.ts'
 
 describe('termWords', () => {
