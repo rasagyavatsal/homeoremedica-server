@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-  # Pushes to this repository don't start workflows yet (#4); run it with `gh workflow run release-please.yml --ref main`.
-  workflow_dispatch:
 
 permissions:
   contents: write
