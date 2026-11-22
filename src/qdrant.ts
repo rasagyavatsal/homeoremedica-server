@@ -27,16 +27,11 @@ export const RRF_K = 60
 export const DOMINANT_SHARE = 0.5
 // Regrouped results start with the best passage of each of this many remedies.
 export const DIFFERENTIAL_REMEDIES = 5
-// Prior rankings, such as the repertory's, are fused with the books' support by reciprocal rank with
-// this constant. Every ranking counts as much as the support does.
-export const PRIOR_K = 10
 export const QDRANT_TIMEOUT_MS = 30_000
 const LABEL = 'Qdrant'
 
 export interface SearchOptions {
   limit: number
-  /** Rankings of remedy ids, best first, each fused with the books' support as its equal. */
-  priors?: readonly (readonly string[])[] | undefined
 }
 
 // Book IDs are the books' Qdrant collection names.
@@ -73,10 +68,7 @@ export interface SearchStages {
   sparse: readonly (readonly Candidate[])[]
   /** Both rankings fused, best first. */
   fused: readonly Candidate[]
-  /**
-   * Subjects by the books' support, fused with the prior rankings when any were given, best first,
-   * when the fused results were regrouped; otherwise null.
-   */
+  /** Subjects by the books' support, best first, when the fused results were regrouped; otherwise null. */
   support: readonly string[] | null
   /** The candidates the search returns. */
   best: readonly Candidate[]
@@ -88,7 +80,6 @@ export class QdrantCorpus {
   readonly #headers: Record<string, string>
   readonly #fetch: Fetch
   readonly #timeoutMs: number
-  readonly #priorK: number
 
   constructor({
     url,
@@ -96,22 +87,18 @@ export class QdrantCorpus {
     bookIds = BOOKS.map((book) => book.bookId),
     fetch: fetchImpl = fetch,
     timeoutMs = QDRANT_TIMEOUT_MS,
-    priorK = PRIOR_K,
   }: {
     url: string
     apiKey?: string | undefined
     bookIds?: readonly string[]
     fetch?: Fetch
     timeoutMs?: number
-    /** The reciprocal-rank constant with which prior rankings are fused with the books' support. */
-    priorK?: number
   }) {
     this.#baseUrl = `${url.replace(/\/+$/, '')}/collections/`
     this.#bookIds = bookIds
     this.#headers = { 'Content-Type': 'application/json', ...(apiKey ? { 'api-key': apiKey } : {}) }
     this.#fetch = fetchImpl
     this.#timeoutMs = timeoutMs
-    this.#priorK = priorK
   }
 
   async verify(): Promise<void> {
@@ -134,8 +121,8 @@ export class QdrantCorpus {
   }
 
   /**
-   * The best `limit` passages. Each of the `priors`, rankings of remedy ids, best first, is fused
-   * with the books' support as its equal when the results are regrouped.
+   * The best `limit` passages. The repertories' and Clarke's rankings are not weighed in: an answer
+   * gives them sections of their own, so the passages stay the books' own view of the case.
    */
   async search(
     query: string,
@@ -161,7 +148,7 @@ export class QdrantCorpus {
   async stages(
     query: string,
     embedding: readonly number[],
-    { limit, priors = [] }: SearchOptions,
+    { limit }: SearchOptions,
   ): Promise<SearchStages> {
     const candidates = limit * PREFETCH_MULTIPLIER
     const rankings = await Promise.all(
@@ -183,7 +170,7 @@ export class QdrantCorpus {
     const ranked = topCandidates([...fused.values()], fused.size)
     const found = { dense, sparse, fused: ranked }
     if (dominated(ranked, limit)) return { ...found, support: null, best: ranked.slice(0, limit) }
-    const support = priors.length ? withPriors(bySupport(ranked), priors, this.#priorK) : bySupport(ranked)
+    const support = bySupport(ranked)
     return { ...found, support, best: select(ranked, support, limit) }
   }
 
@@ -294,22 +281,6 @@ function bySupport(ranked: readonly Candidate[]): string[] {
     support.set(subject, (support.get(subject) ?? 0) + score)
   }
   return [...support.keys()].sort((a, b) => support.get(b)! - support.get(a)!)
-}
-
-/** The supported subjects reordered by reciprocal-rank fusion with rankings of remedy ids, all equal. */
-function withPriors(support: readonly string[], priors: readonly (readonly string[])[], k: number): string[] {
-  const places = priors.map((ranking) => new Map(ranking.map((remedy, index) => [`remedy:${remedy}`, index + 1])))
-  const scores = new Map(
-    support.map((subject, index) => {
-      let score = 1 / (k + index + 1)
-      for (const ranking of places) {
-        const place = ranking.get(subject)
-        if (place) score += 1 / (k + place)
-      }
-      return [subject, score]
-    }),
-  )
-  return [...support].sort((a, b) => scores.get(b)! - scores.get(a)!)
 }
 
 /**

@@ -96,8 +96,8 @@ export async function buildService(settings: Settings): Promise<ChatService> {
   const corpus = loadCorpus(settings)
   await corpus.verify()
   // Every book is searched while Kent's and Boericke's Repertories rank the remedies for the case's
-  // symptoms, and Clarke's Clinical sections those for the diseases it names; both rankings are
-  // fused with the books' support, all three counting the same.
+  // symptoms, and Clarke's Clinical sections those for the diseases it names; each of the three is
+  // a section of the answer of its own.
   const [repertory, clinical] = await Promise.all([
     loadRepertory(settings, embedder, { collections: [REPERTORY_COLLECTION, BOERICKE_COLLECTION] }),
     loadClinical(settings),

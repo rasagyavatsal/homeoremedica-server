@@ -129,40 +129,6 @@ describe('Qdrant corpus', () => {
     expect(subjects(stages.best)).toEqual(['remedy:x-ray', 'remedy:lyssin', 'remedy:pulsatilla'])
   })
 
-  it("fuses a prior ranking with the books' support", async () => {
-    const fetch = fakeFetch(
-      rankings([], [['a1', 9, 'pulsatilla']]),
-      rankings([['n1', 0.9, 'lyssin'], ['n2', 0.8, 'x-ray']], [['n2', 8, 'x-ray']]),
-    )
-
-    const stages = await corpus(fetch, ['allen_keynotes', 'allen_nosodes']).stages('weepy', [1.0], {
-      limit: 3,
-      priors: [['pulsatilla', 'sepia']],
-    })
-
-    // Pulsatilla is last by support but first in the prior, which lifts it above the other two.
-    expect(stages.support).toEqual(['remedy:pulsatilla', 'remedy:x-ray', 'remedy:lyssin'])
-    expect(stages.best.map((candidate) => candidate.subject)).toEqual(['remedy:pulsatilla', 'remedy:x-ray', 'remedy:lyssin'])
-  })
-
-  it('counts every prior ranking the same', async () => {
-    const stagesWith = (priors: readonly (readonly string[])[]) =>
-      new QdrantCorpus({
-        url: 'https://qdrant.example/',
-        bookIds: ['allen_keynotes', 'allen_nosodes'],
-        fetch: fakeFetch(
-          rankings([], [['a1', 9, 'pulsatilla']]),
-          rankings([['n1', 0.9, 'lyssin'], ['n2', 0.8, 'x-ray']], [['n2', 8, 'x-ray']]),
-        ),
-      }).stages('weepy', [1.0], { limit: 3, priors })
-
-    // One ranking puts Lyssin first and another Pulsatilla: equal, they leave the two in the
-    // books' order, ahead of X-Ray, whichever ranking comes first.
-    const expected = ['remedy:lyssin', 'remedy:pulsatilla', 'remedy:x-ray']
-    expect((await stagesWith([['lyssin'], ['pulsatilla']])).support).toEqual(expected)
-    expect((await stagesWith([['pulsatilla'], ['lyssin']])).support).toEqual(expected)
-  })
-
   it.each([
     [{ section_group: 'Mind', sections: ['Mind'] }, 'Mind'],
     [{ section_group: null, sections: ['Mind', 'Head'] }, 'Mind; Head'],
