@@ -158,7 +158,7 @@ describe('production retriever with Clarke', () => {
     terms: new ClinicalTerms([{ text: 'sciatica', remedies: ['gnaph', 'coloc'] }]),
   })
 
-  it("fuses Clarke's ranking beside the repertory's", async () => {
+  it("ranks Clarke's remedies beside the repertory's without reordering the search", async () => {
     const { corpus, calls } = searching()
 
     const retrieval = await new ProductionRetriever(corpus, embedder, { repertory, clinical }).retrieve(
@@ -166,7 +166,8 @@ describe('production retriever with Clarke', () => {
       { limit: 8 },
     )
 
-    expect(calls).toEqual([{ limit: 8, priors: [['puls'], ['coloc', 'gnaph']] }])
+    expect(calls).toEqual([{ limit: 8 }])
+    expect(retrieval.repertory.map((remedy) => remedy.remedyName)).toEqual(['Puls'])
     expect(retrieval.clinical).toEqual([
       { remedyName: 'Coloc', matched: [{ text: 'sciatica' }] },
       { remedyName: 'Gnaph', matched: [{ text: 'sciatica' }] },
@@ -182,30 +183,32 @@ describe('production retriever with Clarke', () => {
     })
     const retriever = new ProductionRetriever(corpus, embedder, { clinical: reading })
 
-    await retriever.retrieve({ ...request('A painful leg.'), diseases: ['sciatica'] }, { limit: 8 })
+    const retrieval = await retriever.retrieve({ ...request('A painful leg.'), diseases: ['sciatica'] }, { limit: 8 })
 
     expect(read).toEqual([])
-    expect(calls).toEqual([{ limit: 8, priors: [['coloc', 'gnaph']] }])
+    expect(calls).toEqual([{ limit: 8 }])
+    expect(retrieval.clinical.map((remedy) => remedy.remedyName)).toEqual(['Coloc', 'Gnaph'])
     expect(await retriever.diseases(request('Asthma at night.'))).toEqual(['asthma'])
     expect(read).toEqual(['Asthma at night.'])
     expect(await new ProductionRetriever(corpus, embedder).diseases(request('Asthma at night.'))).toEqual([])
   })
 
-  it('searches without Clarke when he lists many remedies for the one disease the case names', async () => {
-    const { corpus, calls } = searching()
+  it('leaves Clarke out when he lists many remedies for the one disease the case names', async () => {
+    const { corpus } = searching()
     const common = new Clinical({
       extractor: { extractDiseases: async () => ['asthma'] },
       terms: new ClinicalTerms([{ text: 'asthma', remedies: ['ars', 'ip', 'kali-c', 'nat-s', 'spong'] }]),
     })
 
-    await new ProductionRetriever(corpus, embedder, { repertory, clinical: common }).retrieve(request('Asthma at night.'), {
-      limit: 8,
-    })
+    const retrieval = await new ProductionRetriever(corpus, embedder, { repertory, clinical: common }).retrieve(
+      request('Asthma at night.'),
+      { limit: 8 },
+    )
 
-    expect(calls).toEqual([{ limit: 8, priors: [['puls']] }])
+    expect(retrieval.clinical).toEqual([])
   })
 
-  it('searches without Clarke when the case names no disease he lists, or matching fails', async () => {
+  it('leaves Clarke out when the case names no disease he lists, or matching fails', async () => {
     const { corpus, calls } = searching()
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     const none = new Clinical({ extractor: { extractDiseases: async () => [] }, terms: new ClinicalTerms([]) })
@@ -217,15 +220,14 @@ describe('production retriever with Clarke', () => {
     }
 
     for (const ranker of [none, failing]) {
-      await new ProductionRetriever(corpus, embedder, { repertory, clinical: ranker }).retrieve(request('A weepy woman.'), {
-        limit: 8,
-      })
+      const retrieval = await new ProductionRetriever(corpus, embedder, { repertory, clinical: ranker }).retrieve(
+        request('A weepy woman.'),
+        { limit: 8 },
+      )
+      expect(retrieval.clinical).toEqual([])
     }
 
-    expect(calls).toEqual([
-      { limit: 8, priors: [['puls']] },
-      { limit: 8, priors: [['puls']] },
-    ])
+    expect(calls).toEqual([{ limit: 8 }, { limit: 8 }])
     expect(logged).toHaveBeenCalledOnce()
     logged.mockRestore()
   })

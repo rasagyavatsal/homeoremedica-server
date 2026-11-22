@@ -6,7 +6,7 @@
  * remedies whose sections name it, and loads them into the `clarke_clinical` Qdrant collection.
  * The chat model names a case's diseases, and a disease matches every term whose words are all
  * among its own, ignoring spelling, plurals and word order, so `bronchial asthma` takes both
- * `asthma` and `asthma, bronchial`. The ranking is fused with the books' support beside the
+ * `asthma` and `asthma, bronchial`. The ranking is a section of the answer beside the
  * repertories'; merged into the repertories' symptoms, it made their ranking worse.
  */
 

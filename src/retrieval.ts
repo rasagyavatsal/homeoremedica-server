@@ -22,7 +22,7 @@ export interface SearchableRelease {
   search(
     query: string,
     embedding: readonly number[],
-    options: { limit: number; priors?: readonly (readonly string[])[] | undefined },
+    options: { limit: number },
   ): Promise<readonly RetrievedSource[]>
 }
 
@@ -33,12 +33,13 @@ export class ProductionRetriever implements Retriever {
   readonly #clinical: ClinicalRanker | undefined
 
   /**
-   * The whole corpus is searched. With a repertory, its ranking of remedies for the symptoms of a
-   * question that describes a patient is fused with the books' support for each remedy. With
-   * `clinical`, Clarke's remedies for the diseases the case names are fused beside it. The
-   * rankings and the books' support all count the same. A ranking that many remedies lead together
-   * at a low score is left out. The leading remedies of each ranking are returned with the
-   * passages, and the rubrics behind the repertories' as further sources.
+   * The whole corpus is searched. With a repertory, it also ranks remedies for the symptoms of a
+   * question that describes a patient, and with `clinical`, Clarke's remedies for the diseases the
+   * case names are ranked too. The rankings do not reorder the passages: an answer gives each its
+   * own section, and weighing them into the search named their polychrests a second time in place
+   * of the remedies the books found. A ranking that many remedies lead together at a low score is
+   * left out. The leading remedies of each ranking are returned with the passages, and the rubrics
+   * behind the repertories' as further sources.
    */
   constructor(
     corpus: SearchableRelease,
@@ -59,15 +60,11 @@ export class ProductionRetriever implements Retriever {
     // question they were read from, so they answer for the case as the user corrected it.
     const confirmed = [...(request.symptoms ?? []), ...(request.diseases ?? [])]
     const searched = confirmed.length ? confirmed.join('\n').slice(0, MAX_RETRIEVAL_QUERY_CHARS) : query
-    const [embedding, repertorisation, match] = await Promise.all([
-      this.#embedder.embedQuery(searched),
+    const [passages, repertorisation, match] = await Promise.all([
+      this.#embedder.embedQuery(searched).then((embedding) => this.#corpus.search(searched, embedding, { limit })),
       this.#repertorisation(query, request.symptoms),
       this.#clinicalMatch(query, request.diseases),
     ])
-    const priors = [repertorisation?.remedies.map((remedy) => remedy.remedyId), match?.ranking].filter(
-      (ranking) => ranking !== undefined,
-    )
-    const passages = await this.#corpus.search(searched, embedding, { limit, priors })
     const { remedies, rubrics } = repertorisation
       ? leadingRemedies(repertorisation, { firstSource: passages.length + 1 })
       : { remedies: [], rubrics: [] }
@@ -100,7 +97,7 @@ export class ProductionRetriever implements Retriever {
       const match = await this.#clinical.rank(query, diseases)
       return decisiveMatch(match) ? match : undefined
     } catch (error) {
-      // Like the repertory, Clarke's terms only reorder the search.
+      // Like the repertory's, Clarke's ranking is only a section of the answer.
       console.error("Matching Clarke's clinical terms failed; searching without them", error)
       return undefined
     }
@@ -116,7 +113,7 @@ export class ProductionRetriever implements Retriever {
       const repertorisation = await this.#repertory.repertorise(query, symptoms)
       return decisive(repertorisation) ? repertorisation : undefined
     } catch (error) {
-      // The repertory only reorders the search; without it the corpus is searched as usual.
+      // The ranking is only a section of the answer; without it the books still answer.
       console.error('Repertorisation failed; searching without it', error)
       return undefined
     }
