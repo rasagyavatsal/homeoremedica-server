@@ -7,6 +7,16 @@
 * **corpus:** rename the source dataset to `dataset/corpus.json` and consolidate each release into
   one `corpus.sqlite` database with book-filtered retrieval.
 
+## [11.0.1](https://github.com/rasagyavatsal/homeoremedica-server/compare/v11.0.0...v11.0.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* answer practitioners and keep the book passages the books' own ([991d3c5](https://github.com/rasagyavatsal/homeoremedica-server/commit/991d3c5bd1113f92872852a402b276c28f878720))
+* stop telling practitioners to send urgent cases for medical help ([a107a3d](https://github.com/rasagyavatsal/homeoremedica-server/commit/a107a3d7a98a00bc6c3832d70b03ffb31e81b1b9))
+* stop weighing the rankings into the book passages ([a04e2ba](https://github.com/rasagyavatsal/homeoremedica-server/commit/a04e2ba643a9cd2aad27ce42d439cc1f9361c9b2))
+* tell the answer model its users are practitioners ([f712c10](https://github.com/rasagyavatsal/homeoremedica-server/commit/f712c10577ce80c3b5b63d0a27e46ce84e7cddda))
+
 ## [11.0.0](https://github.com/rasagyavatsal/homeoremedica-server/compare/v10.7.0...v11.0.0) (2026-11-20)
 
 

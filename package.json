@@ -1,7 +1,7 @@
 {
   "name": "homeoremedica-server",
   "private": true,
-  "version": "11.0.0",
+  "version": "11.0.1",
   "description": "HomeoRemedica API",
   "license": "MIT",
   "type": "module",
