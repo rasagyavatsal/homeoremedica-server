@@ -110,10 +110,15 @@ describe('standingOut', () => {
     expect(ids([2, 4], [2, 4], [2, 4])).toEqual(['remedy-0', 'remedy-1', 'remedy-2'])
   })
 
-  it('leaves out the remedies that score the same as one past the limit', () => {
-    expect(ids([4, 9], [3, 6], [3, 5], [3, 5])).toEqual(['remedy-0', 'remedy-1'])
+  it('names the remedies that tie past the limit when they make at most four in all', () => {
+    expect(ids([4, 9], [3, 6], [3, 5], [3, 5])).toEqual(['remedy-0', 'remedy-1', 'remedy-2', 'remedy-3'])
+    expect(ids([5, 8], [5, 8], [5, 8], [5, 8], [5, 7])).toEqual(['remedy-0', 'remedy-1', 'remedy-2', 'remedy-3'])
+  })
+
+  it('leaves out the remedies that score the same as one past the limit when more tie', () => {
+    expect(ids([4, 9], [3, 6], [3, 5], [3, 5], [3, 5])).toEqual(['remedy-0', 'remedy-1'])
     expect(ids([4, 9], [3, 5], [3, 5], [3, 5], [3, 5])).toEqual(['remedy-0'])
-    expect(ids([3, 5], [3, 5], [3, 5], [3, 5])).toEqual([])
+    expect(ids([3, 5], [3, 5], [3, 5], [3, 5], [3, 5])).toEqual([])
   })
 })
 
