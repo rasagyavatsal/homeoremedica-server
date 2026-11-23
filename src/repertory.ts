@@ -34,8 +34,10 @@ export const INDECISIVE_TIES = 5
 export const EXTRACTION_MAX_OUTPUT_TOKENS = 16_000
 /** The classification model reasons a little first, and its reasoning counts against this. */
 export const CLASSIFICATION_MAX_OUTPUT_TOKENS = 4_000
-/** How many of a ranking's remedies an answer names, at most. */
+/** How many of a ranking's remedies an answer names, unless a few more tie with the last of them. */
 export const LEADING_REMEDIES = 3
+/** How many remedies an answer names at most, when those past LEADING_REMEDIES tie with the last it names. */
+export const MAX_LEADING_REMEDIES = INDECISIVE_TIES - 1
 /** How many rubrics an answer can cite for the leading remedies; with the passages, as many as a saved answer keeps. */
 export const MAX_RUBRIC_SOURCES = 15
 /** How many of a rubric's remedies its source lists. */
@@ -219,18 +221,24 @@ export function remedyName(remedyId: string): string {
 }
 
 /**
- * The ranking's first `limit` remedies, without those that score the same as a remedy past the
- * limit: only their names order them, so naming some of them and not the others says nothing.
+ * The ranking's first `limit` remedies. Those that score the same as the remedy past the limit are
+ * only ordered by name, so naming some of them and not the others says nothing: when the remedies
+ * up to the end of that tie are at most `max`, all of them are named, and otherwise the tied ones
+ * are left out.
  */
-export function standingOut(remedies: readonly RemedyCandidate[], limit: number): RemedyCandidate[] {
+export function standingOut(remedies: readonly RemedyCandidate[], limit: number, max = MAX_LEADING_REMEDIES): RemedyCandidate[] {
   const next = remedies[limit]
   const leaders = remedies.slice(0, limit)
-  if (!next) return leaders
-  return leaders.filter((remedy) => remedy.symptoms !== next.symptoms || remedy.grades !== next.grades)
+  const ties = (remedy: RemedyCandidate) => remedy.symptoms === next?.symptoms && remedy.grades === next.grades
+  if (!next || !leaders.some(ties)) return leaders
+  let end = limit
+  while (remedies[end] && ties(remedies[end]!)) end++
+  if (end <= max) return remedies.slice(0, end)
+  return leaders.filter((remedy) => !ties(remedy))
 }
 
 /**
- * The ranking's leading remedies, at most `limit` of those that stand out, each with the case's
+ * The ranking's leading remedies, as standingOut gives them, each with the case's
  * symptoms it covers, and the rubrics that list them, as sources an answer can cite. A covered symptom points to the rubric that
  * grades the remedy highest for it; `firstSource` is the place, from 1, of the first rubric among
  * the answer's sources.
