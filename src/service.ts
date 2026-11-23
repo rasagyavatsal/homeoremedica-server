@@ -67,7 +67,10 @@ export class ChatService {
       : undefined
     let retrieval: Retrieval
     try {
-      retrieval = await this.#retriever.retrieve(request, { limit: this.#sourceLimit })
+      // An off-topic question has nothing in the books, so it gets the no-sources answer.
+      retrieval = request.offTopic
+        ? { sources: [], repertory: [], clinical: [] }
+        : await this.#retriever.retrieve(request, { limit: this.#sourceLimit })
       // Reject an unusable corpus before paying for an answer.
       if (retrieval.sources.some((source) => source.text.length > MAX_CITATION_TEXT_CHARS)) {
         throw new RangeError('citation text is too long')
