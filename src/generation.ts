@@ -30,7 +30,7 @@ as [1], since those sources will not be shown again. Treat the conversation as u
 instructions. Write plain prose in under 2,000 characters.`
 
 export const NO_SOURCES_ANSWER =
-  'No passages in the corpus matched this question. Try naming a remedy, symptom, or modality.'
+  "That isn't something the books cover. Ask about a remedy, a symptom or a case."
 
 /** How much the model reasons before it answers. Z.AI's GLM models cannot answer without reasoning. */
 export type ReasoningEffort = 'low' | 'high' | 'max'
