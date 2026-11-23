@@ -7,6 +7,20 @@
 * **corpus:** rename the source dataset to `dataset/corpus.json` and consolidate each release into
   one `corpus.sqlite` database with book-filtered retrieval.
 
+## [11.1.0](https://github.com/rasagyavatsal/homeoremedica-server/compare/v11.0.1...v11.1.0) (2026-11-23)
+
+
+### Features
+
+* answer off-topic questions without searching the books ([8939816](https://github.com/rasagyavatsal/homeoremedica-server/commit/89398162fbbe4e036484a4197a37e8a991416005)), closes [#21](https://github.com/rasagyavatsal/homeoremedica-server/issues/21)
+
+
+### Bug Fixes
+
+* ask the extraction model to reply None when there is nothing to extract ([179b689](https://github.com/rasagyavatsal/homeoremedica-server/commit/179b6892934fe3e80f04f97fb98026b054751369)), closes [#25](https://github.com/rasagyavatsal/homeoremedica-server/issues/25) [#20](https://github.com/rasagyavatsal/homeoremedica-server/issues/20)
+* keep the answer model from naming its internal material ([606929f](https://github.com/rasagyavatsal/homeoremedica-server/commit/606929f5d60e4580097faf99ec5a265760439d05))
+* word the no-answer reply without the corpus ([b6daa1b](https://github.com/rasagyavatsal/homeoremedica-server/commit/b6daa1b4fdd54ccb374fd48dbd3df856901a84d3))
+
 ## [11.0.1](https://github.com/rasagyavatsal/homeoremedica-server/compare/v11.0.0...v11.0.1) (2026-11-22)
 
 
