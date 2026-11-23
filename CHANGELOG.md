@@ -7,6 +7,14 @@
 * **corpus:** rename the source dataset to `dataset/corpus.json` and consolidate each release into
   one `corpus.sqlite` database with book-filtered retrieval.
 
+## [11.1.1](https://github.com/rasagyavatsal/homeoremedica-server/compare/v11.1.0...v11.1.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* name remedies tied at the repertory cut-off instead of dropping them ([ee4175b](https://github.com/rasagyavatsal/homeoremedica-server/commit/ee4175bb968e37d06044e254546e77bb4925d028))
+* name remedies tied at the repertory cut-off instead of dropping them ([514128b](https://github.com/rasagyavatsal/homeoremedica-server/commit/514128bdb1f0d59db4fd47d31328bfb23fa567ea))
+
 ## [11.1.0](https://github.com/rasagyavatsal/homeoremedica-server/compare/v11.0.1...v11.1.0) (2026-11-23)
 
 
