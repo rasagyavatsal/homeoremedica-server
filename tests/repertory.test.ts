@@ -227,6 +227,10 @@ describe('parseSymptoms', () => {
     expect(parseKind('CASE')).toBe('case')
     expect(parseKind('')).toBe('case')
     expect(parseKind('It may be a question or a case.')).toBe('case')
+    expect(parseKind('OFF_TOPIC')).toBe('off-topic')
+    expect(parseKind('Off-topic.')).toBe('off-topic')
+    expect(parseKind('**off topic**')).toBe('off-topic')
+    expect(parseKind('Not off-topic: CASE')).toBe('case')
 
     const stop = new AbortController()
     const calls: [string, string][] = []
@@ -241,7 +245,8 @@ describe('parseSymptoms', () => {
 
     expect(await classifier.classify('What is Sulphur?', stop)).toBe('question')
     expect(calls[0]![0]).toBe('<case>\nWhat is Sulphur?\n</case>')
-    expect(calls[0]![1]).toContain('When unsure, reply CASE')
+    expect(calls[0]![1]).toContain('Reply only OFF_TOPIC')
+    expect(calls[0]![1]).toContain('When unsure whether it is off-topic, it is not')
   })
 })
 
