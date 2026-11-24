@@ -28,7 +28,7 @@ gcloud auth application-default login     # only for saved chats locally (Firest
 | `OPENROUTER_API_KEY` | Required for chat | Query embeddings (`voyageai/voyage-4`). |
 | `ZAI_API_KEY` | Required for chat | Answer generation. |
 | `RAG_MODEL` | `glm-5.3-flash` | Answer model. |
-| `RAG_MAX_OUTPUT_TOKENS` | `4096` | Output token limit, 1 to 4096. |
+| `RAG_MAX_OUTPUT_TOKENS` | `8192` | Output token limit, 1 to 8192. |
 | `FIREBASE_PROJECT_ID` | None | With `FIREBASE_API_KEY`, turns on sign-in and saved chats. |
 | `FIREBASE_API_KEY` | None | Public browser key for Firebase Authentication. |
 | `FIREBASE_AUTH_DOMAIN` | `<project>.firebaseapp.com` | Hosts the Google sign-in pop-up. |

@@ -30,7 +30,7 @@ describe('settings', () => {
       qdrantUrl: 'https://qdrant.example',
       qdrantApiKey: 'qdrant-key',
       model: 'glm-5.3-flash',
-      maxOutputTokens: 4_096,
+      maxOutputTokens: 8_192,
       zaiApiKey: 'zai-key',
       openrouterApiKey: undefined,
       firebaseProjectId: undefined,
@@ -58,7 +58,7 @@ describe('settings', () => {
     expect(settings.webOrigins).toEqual(['https://homeoremedica.com', 'https://homeoremedica.web.app'])
   })
 
-  it.each(['0', '4097', 'many', '12.5'])('rejects RAG_MAX_OUTPUT_TOKENS=%s', (value) => {
+  it.each(['0', '8193', 'many', '12.5'])('rejects RAG_MAX_OUTPUT_TOKENS=%s', (value) => {
     expect(() => loadSettings({ RAG_MAX_OUTPUT_TOKENS: value }, directory)).toThrow(ConfigurationError)
   })
 

@@ -27,7 +27,7 @@ import {
 import { ProductionRetriever } from './retrieval.ts'
 
 export const DEFAULT_MODEL = 'glm-5.3-flash'
-export const MAX_OUTPUT_TOKENS = 4_096
+export const MAX_OUTPUT_TOKENS = 8_192
 
 export interface Settings {
   qdrantUrl: string | undefined
