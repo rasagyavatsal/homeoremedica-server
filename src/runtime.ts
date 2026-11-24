@@ -6,7 +6,7 @@ import { parseEnv } from 'node:util'
 
 import { type Accounts, firebaseAccounts } from './accounts.ts'
 import { Clinical, ClinicalTerms, type DiseaseExtractor, loadClinicalTerms, ModelDiseaseExtractor } from './clinical.ts'
-import { DecisionOpposites, type OppositeCheck } from './decisions.ts'
+import { DecisionCaseClassifier, DecisionOpposites, type OppositeCheck } from './decisions.ts'
 import { ConfigurationError } from './errors.ts'
 import { ZaiChatClient } from './generation.ts'
 import { ChatService } from './service.ts'
@@ -141,17 +141,23 @@ export async function loadRepertory(
   return new Repertory({ classifier, extractor, embedder, rubrics, opposites })
 }
 
-/** The answer model as it decides whether a question is a case: with little reasoning, so the decision is quick. */
+/**
+ * The decision model decides whether a question is a case. When it fails, the answer model decides,
+ * with little reasoning so the decision is quick.
+ */
 export function caseClassifier(settings: Settings): CaseClassifier {
-  return new ModelCaseClassifier(
-    new ZaiChatClient({
-      apiKey: settings.zaiApiKey,
-      model: settings.model,
-      maxOutputTokens: CLASSIFICATION_MAX_OUTPUT_TOKENS,
-      temperature: 0,
-      reasoningEffort: 'low',
-    }),
-  )
+  return new DecisionCaseClassifier({
+    apiKey: settings.openrouterApiKey,
+    fallback: new ModelCaseClassifier(
+      new ZaiChatClient({
+        apiKey: settings.zaiApiKey,
+        model: settings.model,
+        maxOutputTokens: CLASSIFICATION_MAX_OUTPUT_TOKENS,
+        temperature: 0,
+        reasoningEffort: 'low',
+      }),
+    ),
+  })
 }
 
 export function symptomExtractor(settings: Settings): SymptomExtractor {

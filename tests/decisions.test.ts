@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { DecisionOpposites, MAX_DECISION_QUESTIONS } from '../src/decisions.ts'
+import type { QuestionKind } from '../src/contracts.ts'
+import { DecisionCaseClassifier, DecisionOpposites, KIND_CRITERIA, MAX_DECISION_QUESTIONS } from '../src/decisions.ts'
 import { ProviderError } from '../src/errors.ts'
+import type { Fetch } from '../src/http.ts'
 import { fakeFetch, json } from './fakes.ts'
 
 const answers = (...probabilities: number[]) =>
@@ -59,5 +61,64 @@ describe('decision opposites', () => {
 
   it('requires a key', () => {
     expect(() => new DecisionOpposites({ apiKey: undefined })).toThrow(/OPENROUTER_API_KEY/)
+  })
+})
+
+describe('decision case classifier', () => {
+  const choice = (kind: string) => json({ answers: { q0: { type: 'choice', choice: kind } } })
+  const fallback = (kind: QuestionKind) => {
+    const calls: string[] = []
+    return { calls, async classify(text: string) { calls.push(text); return kind } }
+  }
+
+  it('asks the decision model to choose the kind of the latest question', async () => {
+    const fetch = fakeFetch(choice('off-topic'))
+    const backup = fallback('case')
+    const stop = new AbortController()
+
+    const kind = await new DecisionCaseClassifier({ apiKey: 'key', fetch, fallback: backup }).classify('What is 17 times 23?', stop)
+
+    expect(kind).toBe('off-topic')
+    expect(backup.calls).toEqual([])
+    expect(fetch.calls[0]?.url).toBe('https://openrouter.ai/api/alpha/decisions')
+    expect(fetch.calls[0]?.body).toMatchObject({
+      model: 'liquid/d1.2-ultra',
+      state: 'The latest questions a user put to a homoeopathic reference, oldest first: "What is 17 times 23?"',
+      questions: { q0: { type: 'choice', criteria: KIND_CRITERIA } },
+    })
+  })
+
+  it.each([
+    ['fails', new Response('provider secret', { status: 500 })],
+    ['gives no choice', json({ answers: { q0: { type: 'choice' } } })],
+    ['chooses another kind', choice('remedy')],
+  ])('asks the fallback when the decision model %s', async (_, response) => {
+    const backup = fallback('question')
+
+    const kind = await new DecisionCaseClassifier({ apiKey: 'key', fetch: fakeFetch(response), fallback: backup }).classify('What is Sulphur?')
+
+    expect(kind).toBe('question')
+    expect(backup.calls).toEqual(['What is Sulphur?'])
+  })
+
+  it('does not ask the fallback once the question is cancelled', async () => {
+    const stop = new AbortController()
+    stop.abort()
+    const backup = fallback('question')
+    const fetch: Fetch = async (_url, init) => {
+      init?.signal?.throwIfAborted()
+      return choice('case')
+    }
+
+    const error = await new DecisionCaseClassifier({ apiKey: 'key', fetch, fallback: backup })
+      .classify('What is Sulphur?', stop)
+      .catch((error: unknown) => error)
+
+    expect(error).toBeInstanceOf(ProviderError)
+    expect(backup.calls).toEqual([])
+  })
+
+  it('requires a key', () => {
+    expect(() => new DecisionCaseClassifier({ apiKey: undefined, fallback: fallback('case') })).toThrow(/OPENROUTER_API_KEY/)
   })
 })
