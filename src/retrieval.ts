@@ -5,12 +5,13 @@ import {
   type ChatRequest,
   MAX_RETRIEVAL_QUERY_CHARS,
   type QuestionKind,
+  type RepertoryRanking,
   type Retrieval,
   type RetrievedSource,
   type Retriever,
 } from './contracts.ts'
 import { type ClinicalMatch, type ClinicalRanker, decisiveMatch, leadingClinicalRemedies } from './clinical.ts'
-import { type Repertorisation, type Repertoriser, decisive, leadingRemedies } from './repertory.ts'
+import { REPERTORIES, type Repertorisation, type Repertoriser, decisive, inRepertory, leadingRemedies } from './repertory.ts'
 
 const PREVIOUS_QUESTIONS = 2
 
@@ -33,13 +34,13 @@ export class ProductionRetriever implements Retriever {
   readonly #clinical: ClinicalRanker | undefined
 
   /**
-   * The whole corpus is searched. With a repertory, it also ranks remedies for the symptoms of a
-   * question that describes a patient, and with `clinical`, Clarke's remedies for the diseases the
-   * case names are ranked too. The rankings do not reorder the passages: an answer gives each its
-   * own section, and weighing them into the search named their polychrests a second time in place
-   * of the remedies the books found. A ranking that many remedies lead together at a low score is
-   * left out. The leading remedies of each ranking are returned with the passages, and the rubrics
-   * behind the repertories' as further sources.
+   * Every book is searched for passages of its own. With a repertory, it also ranks remedies for
+   * the symptoms of a question that describes a patient, each repertory apart, and with `clinical`,
+   * Clarke's remedies for the diseases the case names are ranked too. The rankings do not reorder
+   * the passages: an answer gives each its own section, and weighing them into the search named
+   * their polychrests a second time in place of the remedies the books found. A ranking that many
+   * remedies lead together at a low score is left out. The leading remedies of each ranking are
+   * returned with the passages, and the rubrics behind the repertories' as further sources.
    */
   constructor(
     corpus: SearchableRelease,
@@ -65,12 +66,20 @@ export class ProductionRetriever implements Retriever {
       this.#repertorisation(query, request.symptoms),
       this.#clinicalMatch(query, request.diseases),
     ])
-    const { remedies, rubrics } = repertorisation
-      ? leadingRemedies(repertorisation, { firstSource: passages.length + 1 })
-      : { remedies: [], rubrics: [] }
+    // Each repertory ranks the remedies on its own, for an answer section of its own.
+    const repertories: RepertoryRanking[] = []
+    const rubrics: RetrievedSource[] = []
+    for (const { bookId, title } of repertorisation ? REPERTORIES : []) {
+      const ranked = inRepertory(repertorisation!, bookId)
+      if (!decisive(ranked)) continue
+      const leading = leadingRemedies(ranked, { firstSource: passages.length + rubrics.length + 1 })
+      if (!leading.remedies.length) continue
+      repertories.push({ bookTitle: title, remedies: leading.remedies })
+      rubrics.push(...leading.rubrics)
+    }
     return {
       sources: [...passages, ...rubrics],
-      repertory: remedies,
+      repertories,
       clinical: match ? leadingClinicalRemedies(match) : [],
     }
   }
@@ -103,15 +112,11 @@ export class ProductionRetriever implements Retriever {
     }
   }
 
-  /**
-   * The repertorisation of the case the query describes, if it describes one and tells remedies
-   * apart; of `symptoms` when the user confirmed them.
-   */
+  /** The repertorisation of the case the query describes; of `symptoms` when the user confirmed them. */
   async #repertorisation(query: string, symptoms: readonly string[] | undefined): Promise<Repertorisation | undefined> {
     if (!this.#repertory) return undefined
     try {
-      const repertorisation = await this.#repertory.repertorise(query, symptoms)
-      return decisive(repertorisation) ? repertorisation : undefined
+      return await this.#repertory.repertorise(query, symptoms)
     } catch (error) {
       // The ranking is only a section of the answer; without it the books still answer.
       console.error('Repertorisation failed; searching without it', error)

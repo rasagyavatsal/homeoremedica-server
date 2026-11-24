@@ -387,14 +387,16 @@ describe('production retriever with a repertory', () => {
     }
     return { corpus, calls }
   }
-  const repertoryOf = (...remedyIds: string[]): Repertoriser => ({
-    kind: async () => 'case',
-    symptoms: async () => [],
-    repertorise: async () => ({
-      symptoms: [],
-      remedies: remedyIds.map((remedyId) => ({ remedyId, symptoms: 1, grades: 1 })),
-    }),
-  })
+  const repertoryOf = (...remedyIds: string[]): Repertoriser => {
+    const symptoms = [{ symptom: 'Mind: weeps', rubrics: [rubric('Mind: weeping', ...remedyIds.map((id): [string, number] => [id, 1]))] }]
+    return {
+      kind: async () => 'case',
+      symptoms: async () => [],
+      repertorise: async () => ({ symptoms, remedies: rankRemedies(symptoms) }),
+    }
+  }
+  const names = ({ repertories }: { repertories: readonly { remedies: readonly { remedyName: string }[] }[] }) =>
+    repertories.map(({ remedies }) => remedies.map((remedy) => remedy.remedyName))
 
   it("searches the books without the repertory's ranking, which has its own section", async () => {
     const { corpus, calls } = searching()
@@ -404,13 +406,14 @@ describe('production retriever with a repertory', () => {
     }).retrieve(request('A weepy, thirstless woman.'), { limit: 8 })
 
     expect(calls).toEqual([{ limit: 8 }])
-    expect(retrieval.repertory.map((remedy) => remedy.remedyName)).toEqual(['Puls', 'Sep', 'Nat m'])
+    expect(names(retrieval)).toEqual([['Nat m', 'Puls', 'Sep']])
   })
 
-  it('returns the leading remedies and their rubrics after the passages', async () => {
+  it("returns each repertory's leading remedies and their rubrics after the passages", async () => {
     const passage = { chunkId: 'chk_1', bookId: 'kent_lectures', bookTitle: "Kent's Lectures", author: null, remedyName: 'PULSATILLA', sectionTitle: 'MIND', passageIndexes: [1], text: 'Weeps.', score: 0.03 }
     const corpus: SearchableRelease = { search: async () => [passage] }
-    const symptoms = [{ symptom: 'Mind: weeps easily', rubrics: [rubric('Mind: weeping', ['pulsatilla', 3])] }]
+    const boericke = { ...rubric('Mind: tearful', ['ignatia', 2]), bookId: 'boericke_repertory' }
+    const symptoms = [{ symptom: 'Mind: weeps easily', rubrics: [rubric('Mind: weeping', ['pulsatilla', 3]), boericke] }]
     const repertory: Repertoriser = {
       kind: async () => 'case',
     symptoms: async () => [],
@@ -419,8 +422,14 @@ describe('production retriever with a repertory', () => {
 
     const retrieval = await new ProductionRetriever(corpus, embedder, { repertory }).retrieve(request('A weepy woman.'), { limit: 5 })
 
-    expect(retrieval.sources.map((source) => source.chunkId)).toEqual(['chk_1', 'Mind: weeping'])
-    expect(retrieval.repertory).toEqual([{ remedyName: 'Pulsatilla', matched: [{ text: 'Mind: weeps easily', source: 2 }] }])
+    expect(retrieval.sources.map((source) => source.chunkId)).toEqual(['chk_1', 'Mind: weeping', 'Mind: tearful'])
+    expect(retrieval.repertories).toEqual([
+      {
+        bookTitle: 'Kent, Repertory of the Homoeopathic Materia Medica',
+        remedies: [{ remedyName: 'Pulsatilla', matched: [{ text: 'Mind: weeps easily', source: 2 }] }],
+      },
+      { bookTitle: 'Boericke, Repertory', remedies: [{ remedyName: 'Ignatia', matched: [{ text: 'Mind: weeps easily', source: 3 }] }] },
+    ])
     expect(retrieval.clinical).toEqual([])
   })
 
@@ -432,7 +441,7 @@ describe('production retriever with a repertory', () => {
     }).retrieve(request('A weepy woman.'), { limit: 8 })
 
     expect(calls).toEqual([{ limit: 8 }])
-    expect(retrieval.repertory).toEqual([])
+    expect(retrieval.repertories).toEqual([])
   })
 
   it('searches the whole corpus when the question describes no patient', async () => {
@@ -444,7 +453,7 @@ describe('production retriever with a repertory', () => {
     )
 
     expect(calls).toEqual([{ limit: 8 }])
-    expect(retrieval.repertory).toEqual([])
+    expect(retrieval.repertories).toEqual([])
   })
 
   it('sorts, reads symptoms from, and ranks by, the questions the search uses', async () => {
@@ -488,7 +497,7 @@ describe('production retriever with a repertory', () => {
     })
 
     expect(calls).toEqual([{ limit: 8 }])
-    expect(retrieval.repertory).toEqual([])
+    expect(retrieval.repertories).toEqual([])
     expect(logged).toHaveBeenCalledOnce()
     logged.mockRestore()
   })

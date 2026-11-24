@@ -20,8 +20,8 @@ import {
 import { shouldCompact } from './conversation.ts'
 import { COMPACTION_INSTRUCTION, NO_SOURCES_ANSWER, SYSTEM_INSTRUCTION, compactionPrompt, generationPrompt } from './generation.ts'
 
-/** How many of the books' passages each answer is generated from. */
-export const SOURCE_LIMIT = 5
+/** How many passages of each book an answer is generated from. */
+export const SOURCE_LIMIT = 2
 
 /** Own the complete retrieve-and-generate sequence behind one narrow chat method. */
 export class ChatService {
@@ -69,7 +69,7 @@ export class ChatService {
     try {
       // An off-topic question has nothing in the books, so it gets the no-sources answer.
       retrieval = request.offTopic
-        ? { sources: [], repertory: [], clinical: [] }
+        ? { sources: [], repertories: [], clinical: [] }
         : await this.#retriever.retrieve(request, { limit: this.#sourceLimit })
       // Reject an unusable corpus before paying for an answer.
       if (retrieval.sources.some((source) => source.text.length > MAX_CITATION_TEXT_CHARS)) {

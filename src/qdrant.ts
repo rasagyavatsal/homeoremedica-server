@@ -6,9 +6,8 @@
  * the same way as that repository's `scripts/search.py`, which its retrieval evaluation measures.
  * Qdrant encodes the BM25 query itself with the same model that indexed the collections.
  *
- * Unlike `scripts/search.py`, results that no remedy dominates are regrouped by remedy: a
- * question that describes symptoms rather than naming a remedy gets the remedies most books
- * support, instead of passages that each match well in only one book.
+ * Each book is searched on its own and gives its best passages, so an answer can give every book
+ * a section of its own.
  */
 
 import type { BookSummary, RetrievedSource } from './contracts.ts'
@@ -18,19 +17,16 @@ import { type Fetch, isRecord, readJson, send } from './http.ts'
 export const DENSE_VECTOR = 'dense'
 export const SPARSE_VECTOR = 'bm25'
 export const SPARSE_MODEL = 'qdrant/bm25'
-// Each ranking contributes this many candidates per requested source before fusion: 40 for the
-// five sources an answer is generated from.
+// Each ranking contributes this many candidates per requested passage before fusion: 16 for the
+// two passages each book gives an answer.
 export const PREFETCH_MULTIPLIER = 8
 // The standard reciprocal-rank fusion constant: a ranking adds 1 / (RRF_K + rank) to each point.
 export const RRF_K = 60
-// Results are regrouped by remedy unless one remedy, or one book without remedies, holds this share.
-export const DOMINANT_SHARE = 0.5
-// Regrouped results start with the best passage of each of this many remedies.
-export const DIFFERENTIAL_REMEDIES = 5
 export const QDRANT_TIMEOUT_MS = 30_000
 const LABEL = 'Qdrant'
 
 export interface SearchOptions {
+  /** How many passages each book gives. */
   limit: number
 }
 
@@ -52,26 +48,9 @@ export class CorpusError extends Error {
 
 type PointId = string | number
 
-export interface Candidate {
-  bookId: string
+interface Candidate {
   id: PointId
   score: number
-  /** The passage's remedy as `remedy:<id>`, or its book as `book:<id>` when it has none, such as an Organon passage. */
-  subject: string
-}
-
-/** What a search found at each step, so an evaluation can see where a remedy was lost. */
-export interface SearchStages {
-  /** The dense candidates of all books together, best first. */
-  dense: readonly Candidate[]
-  /** Each book's BM25 candidates, best first. */
-  sparse: readonly (readonly Candidate[])[]
-  /** Both rankings fused, best first. */
-  fused: readonly Candidate[]
-  /** Subjects by the books' support, best first, when the fused results were regrouped; otherwise null. */
-  support: readonly string[] | null
-  /** The candidates the search returns. */
-  best: readonly Candidate[]
 }
 
 export class QdrantCorpus {
@@ -121,22 +100,14 @@ export class QdrantCorpus {
   }
 
   /**
-   * The best `limit` passages. The repertories' and Clarke's rankings are not weighed in: an answer
-   * gives them sections of their own, so the passages stay the books' own view of the case.
+   * The best `limit` passages of each book, book by book. The repertories' and Clarke's rankings are
+   * not weighed in: an answer gives them sections of their own, so the passages stay the books' own
+   * view of the case.
    */
-  async search(
-    query: string,
-    embedding: readonly number[],
-    options: SearchOptions,
-  ): Promise<RetrievedSource[]> {
+  async search(query: string, embedding: readonly number[], { limit }: SearchOptions): Promise<RetrievedSource[]> {
     try {
-      const { best } = await this.stages(query, embedding, options)
-      const payloads = await this.#payloads(best)
-      return best.map((candidate) => {
-        const payload = payloads.get(candidateKey(candidate.bookId, candidate.id))
-        if (!payload) throw new ProviderError('Qdrant returned no payload for a query point')
-        return toSource(candidate.bookId, payload, candidate.score)
-      })
+      const books = await Promise.all(this.#bookIds.map((bookId) => this.#passages(bookId, query, embedding, limit)))
+      return books.flat()
     } catch (error) {
       // A failed search is not the chat provider's failure, so it is not reported as one.
       if (isTimeout(error)) throw error
@@ -144,34 +115,20 @@ export class QdrantCorpus {
     }
   }
 
-  /** The candidates `search` ranks at each step, without fetching the passages. */
-  async stages(
-    query: string,
-    embedding: readonly number[],
-    { limit }: SearchOptions,
-  ): Promise<SearchStages> {
-    const candidates = limit * PREFETCH_MULTIPLIER
-    const rankings = await Promise.all(
-      this.#bookIds.map((bookId) => this.#rank(bookId, query, embedding, candidates)),
-    )
-    // Dense scores compare across books, so the dense ranking is global. BM25 IDF is per
-    // collection, and a small book such as the Organon scores high on everything, so each book
-    // keeps its own BM25 ranking.
-    const dense = topCandidates(rankings.flatMap(([denseRanking]) => denseRanking), candidates)
-    const sparse = rankings.map(([, sparseRanking]) => sparseRanking)
-    const fused = new Map<string, Candidate>()
-    for (const ranking of [dense, ...sparse]) {
-      for (const [position, candidate] of ranking.entries()) {
-        const key = candidateKey(candidate.bookId, candidate.id)
-        const score = (fused.get(key)?.score ?? 0) + 1 / (RRF_K + position + 1)
-        fused.set(key, { ...candidate, score })
-      }
+  /** One book's best `limit` passages, its dense and BM25 rankings fused. */
+  async #passages(bookId: string, query: string, embedding: readonly number[], limit: number): Promise<RetrievedSource[]> {
+    const fused = new Map<PointId, number>()
+    for (const ranking of await this.#rank(bookId, query, embedding, limit * PREFETCH_MULTIPLIER)) {
+      for (const [position, { id }] of ranking.entries()) fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + position + 1))
     }
-    const ranked = topCandidates([...fused.values()], fused.size)
-    const found = { dense, sparse, fused: ranked }
-    if (dominated(ranked, limit)) return { ...found, support: null, best: ranked.slice(0, limit) }
-    const support = bySupport(ranked)
-    return { ...found, support, best: select(ranked, support, limit) }
+    const best = [...fused].sort((a, b) => b[1] - a[1]).slice(0, limit)
+    if (!best.length) return []
+    const payloads = await this.#payloads(bookId, best.map(([id]) => id))
+    return best.map(([id, score]) => {
+      const payload = payloads.get(id)
+      if (!payload) throw new ProviderError('Qdrant returned no payload for a query point')
+      return toSource(bookId, payload, score)
+    })
   }
 
   /** One collection's dense and BM25 candidates, best first. */
@@ -185,12 +142,12 @@ export class QdrantCorpus {
       method: 'POST',
       body: JSON.stringify({
         searches: [
-          { query: embedding, using: DENSE_VECTOR, limit, with_payload: ['remedy_id'], with_vector: false },
+          { query: embedding, using: DENSE_VECTOR, limit, with_payload: false, with_vector: false },
           {
             query: { text: query, model: SPARSE_MODEL },
             using: SPARSE_VECTOR,
             limit,
-            with_payload: ['remedy_id'],
+            with_payload: false,
             with_vector: false,
           },
         ],
@@ -206,38 +163,26 @@ export class QdrantCorpus {
         if (!isRecord(point) || !isPointId(point.id) || typeof point.score !== 'number') {
           throw new ProviderError('Qdrant returned an invalid point')
         }
-        const remedyId = isRecord(point.payload) ? point.payload.remedy_id : undefined
-        const subject = typeof remedyId === 'string' ? `remedy:${remedyId}` : `book:${bookId}`
-        return { bookId, id: point.id, score: point.score, subject }
+        return { id: point.id, score: point.score }
       })
     })
     return [dense!, sparse!]
   }
 
-  /** The payloads of the given points, keyed by `candidateKey`. */
-  async #payloads(candidates: readonly Candidate[]): Promise<Map<string, Record<string, unknown>>> {
-    const idsByBook = new Map<string, PointId[]>()
-    for (const { bookId, id } of candidates) {
-      const ids = idsByBook.get(bookId) ?? []
-      ids.push(id)
-      idsByBook.set(bookId, ids)
+  /** The payloads of one collection's given points, by id. */
+  async #payloads(bookId: string, ids: readonly PointId[]): Promise<Map<PointId, Record<string, unknown>>> {
+    const response = await this.#request(bookId, '/points', {
+      method: 'POST',
+      body: JSON.stringify({ ids, with_payload: true, with_vector: false }),
+    })
+    const parsed = await readJson(response, LABEL)
+    const points = isRecord(parsed) ? parsed.result : undefined
+    if (!Array.isArray(points)) throw new ProviderError('Qdrant returned no points')
+    const payloads = new Map<PointId, Record<string, unknown>>()
+    for (const point of points) {
+      if (!isRecord(point) || !isPointId(point.id)) throw new ProviderError('Qdrant returned an invalid point')
+      payloads.set(point.id, isRecord(point.payload) ? point.payload : {})
     }
-    const payloads = new Map<string, Record<string, unknown>>()
-    await Promise.all(
-      [...idsByBook].map(async ([bookId, ids]) => {
-        const response = await this.#request(bookId, '/points', {
-          method: 'POST',
-          body: JSON.stringify({ ids, with_payload: true, with_vector: false }),
-        })
-        const parsed = await readJson(response, LABEL)
-        const points = isRecord(parsed) ? parsed.result : undefined
-        if (!Array.isArray(points)) throw new ProviderError('Qdrant returned no points')
-        for (const point of points) {
-          if (!isRecord(point) || !isPointId(point.id)) throw new ProviderError('Qdrant returned an invalid point')
-          payloads.set(candidateKey(bookId, point.id), isRecord(point.payload) ? point.payload : {})
-        }
-      }),
-    )
     return payloads
   }
 
@@ -251,52 +196,6 @@ export class QdrantCorpus {
     if (!response.ok) throw new ProviderError(`${LABEL} request failed with status ${response.status}`)
     return response
   }
-}
-
-function topCandidates(candidates: Candidate[], limit: number): Candidate[] {
-  return candidates.sort((a, b) => b.score - a.score).slice(0, limit)
-}
-
-/**
- * Whether one subject holds enough of the best `limit` candidates that the question is about it,
- * such as a question that names a remedy, so the fused order stands.
- */
-function dominated(ranked: readonly Candidate[], limit: number): boolean {
-  const counts = new Map<string, number>()
-  for (const { subject } of ranked.slice(0, limit)) counts.set(subject, (counts.get(subject) ?? 0) + 1)
-  return Math.max(0, ...counts.values()) >= limit * DOMINANT_SHARE
-}
-
-/**
- * Subjects by how well the books together support them, best first. A subject's support sums its
- * best passage in each book, so agreement between books outweighs many passages from one, such as
- * the long symptom lists of the provings and the nosodes.
- */
-function bySupport(ranked: readonly Candidate[]): string[] {
-  const counted = new Set<string>()
-  const support = new Map<string, number>()
-  for (const { subject, bookId, score } of ranked) {
-    if (counted.has(candidateKey(bookId, subject))) continue
-    counted.add(candidateKey(bookId, subject))
-    support.set(subject, (support.get(subject) ?? 0) + score)
-  }
-  return [...support.keys()].sort((a, b) => support.get(b)! - support.get(a)!)
-}
-
-/**
- * The best `limit` of the ranked candidates when no subject dominates them: the question describes
- * symptoms rather than naming a remedy, so the best passage of each of the best-supported remedies
- * comes first, then more of theirs.
- */
-function select(ranked: readonly Candidate[], support: readonly string[], limit: number): Candidate[] {
-  const leaders = new Set(support.slice(0, DIFFERENTIAL_REMEDIES))
-  const firsts = [...leaders].map((subject) => ranked.find((candidate) => candidate.subject === subject)!)
-  const rest = ranked.filter((candidate) => leaders.has(candidate.subject) && !firsts.includes(candidate))
-  return [...firsts, ...rest].slice(0, limit)
-}
-
-function candidateKey(bookId: string, id: PointId): string {
-  return `${bookId}/${id}`
 }
 
 function isPointId(value: unknown): value is PointId {

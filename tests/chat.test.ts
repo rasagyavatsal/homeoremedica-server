@@ -36,7 +36,7 @@ class StubRetriever implements Retriever {
     this.searchCall = { request, limit }
     if (this.failure) throw this.failure
     return {
-      repertory: [],
+      repertories: [],
       clinical: [],
       sources: [
         {
@@ -83,7 +83,7 @@ it('grounds a conversation-aware answer in versioned sources', async () => {
 
   const response = await service.chat(chatRequest)
 
-  expect(retriever.searchCall).toEqual({ request: chatRequest, limit: 5 })
+  expect(retriever.searchCall).toEqual({ request: chatRequest, limit: 2 })
   expect(generator.generationPrompt).toContain("[1] Kent's Lectures — NUX VOMICA — MIND")
   expect(generator.generationPrompt).toContain('untrusted user-provided context')
   expect(generator.generationPrompt).toContain('untrusted reference data')
@@ -126,8 +126,13 @@ it('gives the model the rankings with the rubrics they point to, and cites the r
         score: 0,
       },
     ],
-    repertory: [
-      { remedyName: 'Nux vomica', matched: [{ text: 'Mind: irritable', source: 2 }, { text: 'Sleep: waking at 3 a.m.' }] },
+    repertories: [
+      {
+        bookTitle: 'Kent, Repertory of the Homoeopathic Materia Medica',
+        remedies: [
+          { remedyName: 'Nux vomica', matched: [{ text: 'Mind: irritable', source: 2 }, { text: 'Sleep: waking at 3 a.m.' }] },
+        ],
+      },
     ],
     clinical: [{ remedyName: 'Colocynthis', matched: [{ text: 'sciatica' }] }],
   })
@@ -136,7 +141,8 @@ it('gives the model the rankings with the rubrics they point to, and cites the r
   const response = await new ChatService({ retriever, generator }).chat(request({ message: 'An irritable man with sciatica.' }))
 
   expect(generator.generationPrompt).toContain(
-    '<repertory_ranking>\n1. Nux vomica: Mind: irritable [2]; Sleep: waking at 3 a.m.\n</repertory_ranking>\n' +
+    '<repertory_ranking book="Kent, Repertory of the Homoeopathic Materia Medica">\n' +
+      '1. Nux vomica: Mind: irritable [2]; Sleep: waking at 3 a.m.\n</repertory_ranking>\n' +
       '<clinical_ranking>\n1. Colocynthis: sciatica\n</clinical_ranking>\n',
   )
   expect(generator.generationPrompt).toContain(
@@ -226,7 +232,7 @@ it('rejects oversized citation text before generating an answer', async () => {
 
 it('answers without the model when retrieval finds no sources', async () => {
   const retriever = new StubRetriever()
-  retriever.retrieve = async () => ({ sources: [], repertory: [], clinical: [] })
+  retriever.retrieve = async () => ({ sources: [], repertories: [], clinical: [] })
   const generator = new StubGenerator()
 
   const streamed: string[] = []

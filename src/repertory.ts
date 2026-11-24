@@ -1,5 +1,6 @@
 /**
- * Repertorisation of a described case against Kent's Repertory, and optionally Boericke's.
+ * Repertorisation of a described case against Kent's Repertory, and optionally Boericke's, each
+ * ranking remedies on its own.
  *
  * The case is split into symptoms by the chat model, each symptom is matched to its nearest
  * rubrics by voyage-4 embedding, and remedies are ranked the way a homoeopath works a repertory:
@@ -38,8 +39,8 @@ export const CLASSIFICATION_MAX_OUTPUT_TOKENS = 4_000
 export const LEADING_REMEDIES = 3
 /** How many remedies an answer names at most, when those past LEADING_REMEDIES tie with the last it names. */
 export const MAX_LEADING_REMEDIES = INDECISIVE_TIES - 1
-/** How many rubrics an answer can cite for the leading remedies; with the passages, as many as a saved answer keeps. */
-export const MAX_RUBRIC_SOURCES = 15
+/** How many rubrics of each repertory an answer can cite for its leading remedies; with the passages, as many as a saved answer keeps. */
+export const MAX_RUBRIC_SOURCES = 8
 /** How many of a rubric's remedies its source lists. */
 export const MAX_RUBRIC_REMEDIES = 40
 const MAX_RUBRIC_TITLE_CHARS = 500
@@ -200,6 +201,14 @@ export function rankRemedies(matches: readonly SymptomMatch[]): RemedyCandidate[
   return [...totals.values()].sort(
     (a, b) => b.symptoms - a.symptoms || b.grades - a.grades || a.remedyId.localeCompare(b.remedyId),
   )
+}
+
+/** The repertorisation by one repertory alone: the symptoms its rubrics match and the remedies they rank. */
+export function inRepertory({ symptoms }: Repertorisation, bookId: string): Repertorisation {
+  const matches = symptoms
+    .map(({ symptom, rubrics }) => ({ symptom, rubrics: rubrics.filter((rubric) => rubric.bookId === bookId) }))
+    .filter(({ rubrics }) => rubrics.length)
+  return { symptoms: matches, remedies: rankRemedies(matches) }
 }
 
 /**

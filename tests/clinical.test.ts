@@ -141,7 +141,10 @@ describe('production retriever with Clarke', () => {
   const repertory: Repertoriser = {
     kind: async () => 'case',
     symptoms: async () => [],
-    repertorise: async () => ({ symptoms: [], remedies: [{ remedyId: 'puls', symptoms: 1, grades: 1 }] }),
+    repertorise: async () => {
+      const rubrics = [{ id: 'r', bookId: 'kent_repertory', chapter: 'Mind', text: 'Mind: weeping', remedies: [['puls', 1] as const] }]
+      return { symptoms: [{ symptom: 'Mind: weeps', rubrics }], remedies: [{ remedyId: 'puls', symptoms: 1, grades: 1 }] }
+    },
   }
   const searching = () => {
     const calls: unknown[] = []
@@ -167,7 +170,7 @@ describe('production retriever with Clarke', () => {
     )
 
     expect(calls).toEqual([{ limit: 8 }])
-    expect(retrieval.repertory.map((remedy) => remedy.remedyName)).toEqual(['Puls'])
+    expect(retrieval.repertories.map(({ remedies }) => remedies.map((remedy) => remedy.remedyName))).toEqual([['Puls']])
     expect(retrieval.clinical).toEqual([
       { remedyName: 'Coloc', matched: [{ text: 'sciatica' }] },
       { remedyName: 'Gnaph', matched: [{ text: 'sciatica' }] },
