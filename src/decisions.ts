@@ -1,0 +1,102 @@
+/** Whether a rubric states the opposite of a symptom, from a decision model through OpenRouter. */
+
+import { ConfigurationError, ProviderError } from './errors.ts'
+import { DEFAULT_OPENROUTER_BASE_URL } from './embeddings.ts'
+import { type Fetch, isRecord, readJson, send } from './http.ts'
+
+/**
+ * Liquid's d1.2-ultra removed fewer rubrics than Baseten's bison-1 on 19 cured cases, more of them
+ * rightly, at under a third of the cost.
+ */
+export const DECISION_MODEL = 'liquid/d1.2-ultra'
+/** A rubric is the opposite of its symptom from this probability. */
+export const OPPOSITE_CUTOFF = 0.7
+/** d1.2-ultra answers at most 128 questions a request. */
+export const MAX_DECISION_QUESTIONS = 100
+export const DECISION_TIMEOUT_MS = 15_000
+const LABEL = 'OpenRouter decision'
+
+export interface SymptomRubric {
+  symptom: string
+  /** The rubric as one line, such as `Stomach: thirst`. */
+  rubric: string
+}
+
+export interface OppositeCheck {
+  /** For each pair, whether the rubric states the opposite of the symptom. */
+  opposites(pairs: readonly SymptomRubric[]): Promise<boolean[]>
+}
+
+/** Asks OpenRouter's Decisions API, in requests of at most MAX_DECISION_QUESTIONS sent together. */
+export class DecisionOpposites implements OppositeCheck {
+  readonly #url: string
+  readonly #headers: Record<string, string>
+  readonly #fetch: Fetch
+  readonly #timeoutMs: number
+
+  constructor({
+    apiKey,
+    baseUrl = DEFAULT_OPENROUTER_BASE_URL,
+    fetch: fetchImpl = fetch,
+    timeoutMs = DECISION_TIMEOUT_MS,
+  }: {
+    apiKey: string | undefined
+    baseUrl?: string
+    fetch?: Fetch
+    timeoutMs?: number
+  }) {
+    if (!apiKey) {
+      throw new ConfigurationError(
+        'an OpenRouter API key is required; set OPENROUTER_API_KEY in the environment or .env',
+      )
+    }
+    // The Decisions API is served beside /api/v1, under /api/alpha.
+    this.#url = `${baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '')}/alpha/decisions`
+    this.#headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+    this.#fetch = fetchImpl
+    this.#timeoutMs = timeoutMs
+  }
+
+  async opposites(pairs: readonly SymptomRubric[]): Promise<boolean[]> {
+    const batches: SymptomRubric[][] = []
+    for (let start = 0; start < pairs.length; start += MAX_DECISION_QUESTIONS) {
+      batches.push(pairs.slice(start, start + MAX_DECISION_QUESTIONS))
+    }
+    return (await Promise.all(batches.map((batch) => this.#decide(batch)))).flat()
+  }
+
+  async #decide(pairs: readonly SymptomRubric[]): Promise<boolean[]> {
+    const questions = Object.fromEntries(
+      pairs.map(({ symptom, rubric }, index) => [
+        `q${index}`,
+        {
+          type: 'noul',
+          instructions: `Symptom: ${JSON.stringify(symptom)}. Rubric: ${JSON.stringify(rubric)}. Does the rubric state the opposite of the symptom?`,
+        },
+      ]),
+    )
+    const response = await send(
+      this.#fetch,
+      this.#url,
+      {
+        method: 'POST',
+        headers: this.#headers,
+        body: JSON.stringify({
+          model: DECISION_MODEL,
+          state: 'Symptoms of a homoeopathic case, each paired with a candidate rubric from a repertory.',
+          questions,
+        }),
+      },
+      { label: LABEL, timeoutMs: this.#timeoutMs },
+    )
+    if (!response.ok) throw new ProviderError(`${LABEL} request failed with status ${response.status}`)
+    const parsed = await readJson(response, LABEL)
+    const answers = isRecord(parsed) ? parsed.answers : undefined
+    return pairs.map((_, index) => {
+      const answer = isRecord(answers) ? answers[`q${index}`] : undefined
+      const probability = isRecord(answer) ? answer.noul : undefined
+      if (typeof probability !== 'number') throw new ProviderError(`${LABEL} returned no answer for a question`)
+      return probability >= OPPOSITE_CUTOFF
+    })
+  }
+}

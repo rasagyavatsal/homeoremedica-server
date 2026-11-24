@@ -282,6 +282,65 @@ describe('Repertory', () => {
     expect(result.remedies.map((remedy) => remedy.remedyId)).toEqual(['puls', 'gels'])
   })
 
+  it('drops the rubrics that state the opposite of their symptom, then keeps the nearest of each repertory', async () => {
+    const searched: number[] = []
+    const asked: unknown[] = []
+    const boericke = { ...rubric('Stomach: thirst, thirstlessness', ['puls', 2]), bookId: 'boericke_repertory' }
+    const repertory = new Repertory({
+      classifier,
+      extractor: { extractSymptoms: async () => ['Thirstless'] },
+      embedder: { embedQueries: async (texts) => texts.map(() => [0]) },
+      rubrics: {
+        async search(_embeddings, { limit }) {
+          searched.push(limit)
+          const kent = ['Stomach: thirst', 'Stomach: thirstless', 'Stomach: thirstless, heat, during', 'Chill: thirstless']
+          return [[...kent.map((text) => rubric(text, ['puls', 1])), boericke]]
+        },
+      },
+      opposites: {
+        async opposites(pairs) {
+          asked.push(...pairs)
+          return pairs.map(({ rubric }) => rubric === 'Stomach: thirst')
+        },
+      },
+    })
+
+    const result = await repertory.repertorise('case')
+
+    expect(searched).toEqual([5])
+    expect(asked).toHaveLength(5)
+    expect(asked[0]).toEqual({ symptom: 'Thirstless', rubric: 'Stomach: thirst' })
+    expect(result.symptoms[0]?.rubrics.map((found) => found.text)).toEqual([
+      'Stomach: thirstless',
+      'Stomach: thirstless, heat, during',
+      'Chill: thirstless',
+      'Stomach: thirst, thirstlessness',
+    ])
+  })
+
+  it('keeps every rubric when the opposite check fails', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const repertory = new Repertory({
+      classifier,
+      extractor: { extractSymptoms: async () => ['Thirstless'] },
+      embedder: { embedQueries: async (texts) => texts.map(() => [0]) },
+      rubrics: {
+        search: async () => [['Stomach: thirst', 'Stomach: thirstless', 'Chill: thirstless', 'Throat: dryness'].map((text) => rubric(text, ['puls', 1]))],
+      },
+      opposites: {
+        opposites: async () => {
+          throw new ProviderError('OpenRouter decision request failed with status 500')
+        },
+      },
+    })
+
+    const result = await repertory.repertorise('case')
+
+    expect(result.symptoms[0]?.rubrics.map((found) => found.text)).toEqual(['Stomach: thirst', 'Stomach: thirstless', 'Chill: thirstless'])
+    expect(logged).toHaveBeenCalledOnce()
+    logged.mockRestore()
+  })
+
   it('searches nothing for a question that describes no patient', async () => {
     const embedQueries = vi.fn()
     const repertory = new Repertory({

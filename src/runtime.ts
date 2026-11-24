@@ -6,6 +6,7 @@ import { parseEnv } from 'node:util'
 
 import { type Accounts, firebaseAccounts } from './accounts.ts'
 import { Clinical, ClinicalTerms, type DiseaseExtractor, loadClinicalTerms, ModelDiseaseExtractor } from './clinical.ts'
+import { DecisionOpposites, type OppositeCheck } from './decisions.ts'
 import { ConfigurationError } from './errors.ts'
 import { ZaiChatClient } from './generation.ts'
 import { ChatService } from './service.ts'
@@ -99,7 +100,10 @@ export async function buildService(settings: Settings): Promise<ChatService> {
   // symptoms, and Clarke's Clinical sections those for the diseases it names; each of the three is
   // a section of the answer of its own.
   const [repertory, clinical] = await Promise.all([
-    loadRepertory(settings, embedder, { collections: [REPERTORY_COLLECTION, BOERICKE_COLLECTION] }),
+    loadRepertory(settings, embedder, {
+      collections: [REPERTORY_COLLECTION, BOERICKE_COLLECTION],
+      opposites: new DecisionOpposites({ apiKey: settings.openrouterApiKey }),
+    }),
     loadClinical(settings),
   ])
   return new ChatService({ retriever: new ProductionRetriever(corpus, embedder, { repertory, clinical }), generator })
@@ -107,7 +111,8 @@ export async function buildService(settings: Settings): Promise<ChatService> {
 
 /**
  * Repertorisation with the answer model, checked to have its Qdrant collections. With several
- * collections, each symptom is matched to its nearest rubrics in each.
+ * collections, each symptom is matched to its nearest rubrics in each; with `opposites`, less those
+ * that state its opposite.
  */
 export async function loadRepertory(
   settings: Settings,
@@ -116,7 +121,13 @@ export async function loadRepertory(
     collections = [REPERTORY_COLLECTION],
     classifier = caseClassifier(settings),
     extractor = symptomExtractor(settings),
-  }: { collections?: readonly string[]; classifier?: CaseClassifier; extractor?: SymptomExtractor } = {},
+    opposites,
+  }: {
+    collections?: readonly string[]
+    classifier?: CaseClassifier
+    extractor?: SymptomExtractor
+    opposites?: OppositeCheck | undefined
+  } = {},
 ): Promise<Repertory> {
   const { qdrantUrl: url, qdrantApiKey: apiKey } = settings
   if (!url) {
@@ -127,7 +138,7 @@ export async function loadRepertory(
     if (!(await search.exists())) throw new CorpusError(`the Qdrant collection ${collections[index]} does not exist`)
   }
   const rubrics = searches.length === 1 ? searches[0]! : new CombinedRubrics(searches)
-  return new Repertory({ classifier, extractor, embedder, rubrics })
+  return new Repertory({ classifier, extractor, embedder, rubrics, opposites })
 }
 
 /** The answer model as it decides whether a question is a case: with little reasoning, so the decision is quick. */

@@ -3,7 +3,8 @@
  * ranking remedies on its own.
  *
  * The case is split into symptoms by the chat model, each symptom is matched to its nearest
- * rubrics by voyage-4 embedding, and remedies are ranked the way a homoeopath works a repertory:
+ * rubrics by voyage-4 embedding, less those a decision model finds state its opposite, and
+ * remedies are ranked the way a homoeopath works a repertory:
  * by how many of the case's symptoms they cover, then by their grades. A ranking that many remedies
  * lead together at a low score is left out of the answer. The rubrics are the
  * `kent_repertory` and `boericke_repertory` Qdrant collections, which the homeoremedica-private
@@ -20,6 +21,7 @@ import {
   type RankedRemedy,
   type RetrievedSource,
 } from './contracts.ts'
+import type { OppositeCheck } from './decisions.ts'
 import { ProviderError } from './errors.ts'
 import { type Fetch, isRecord, readJson, send } from './http.ts'
 
@@ -28,6 +30,8 @@ export const REPERTORY_COLLECTION = 'kent_repertory'
 export const BOERICKE_COLLECTION = 'boericke_repertory'
 /** More rubrics per symptom adds loosely related ones, which made the ranking worse. */
 export const RUBRICS_PER_SYMPTOM = 3
+/** The nearest rubrics of each repertory checked for opposites, so RUBRICS_PER_SYMPTOM are usually left. */
+export const CANDIDATE_RUBRICS = 5
 export { MAX_SYMPTOMS }
 /** A ranking that this many remedies lead together, at a low score, does not tell them apart. */
 export const INDECISIVE_TIES = 5
@@ -127,22 +131,26 @@ export class Repertory implements Repertoriser {
   readonly #extractor: SymptomExtractor
   readonly #embedder: QueriesEmbedder
   readonly #rubrics: RubricSearch
+  readonly #opposites: OppositeCheck | undefined
 
   constructor({
     classifier,
     extractor,
     embedder,
     rubrics,
+    opposites,
   }: {
     classifier: CaseClassifier
     extractor: SymptomExtractor
     embedder: QueriesEmbedder
     rubrics: RubricSearch
+    opposites?: OppositeCheck | undefined
   }) {
     this.#classifier = classifier
     this.#extractor = extractor
     this.#embedder = embedder
     this.#rubrics = rubrics
+    this.#opposites = opposites
   }
 
   kind(text: string, options?: Cancellable): Promise<QuestionKind> {
@@ -157,10 +165,45 @@ export class Repertory implements Repertoriser {
     const symptoms = given ?? (await this.symptoms(text))
     if (!symptoms.length) return { symptoms: [], remedies: [] }
     const embeddings = await this.#embedder.embedQueries(symptoms)
-    const found = await this.#rubrics.search(embeddings, { limit: RUBRICS_PER_SYMPTOM })
-    const matches = distinctMatches(symptoms.map((symptom, index) => ({ symptom, rubrics: found[index] ?? [] })))
+    const found = await this.#rubrics.search(embeddings, {
+      limit: this.#opposites ? CANDIDATE_RUBRICS : RUBRICS_PER_SYMPTOM,
+    })
+    const candidates = await this.#withoutOpposites(symptoms.map((symptom, index) => ({ symptom, rubrics: found[index] ?? [] })))
+    const matches = distinctMatches(
+      candidates.map(({ symptom, rubrics }) => ({ symptom, rubrics: nearestOfEach(rubrics, RUBRICS_PER_SYMPTOM) })),
+    )
     return { symptoms: matches, remedies: rankRemedies(matches) }
   }
+
+  /**
+   * The matches without the rubrics that state the opposite of their symptom, such as `Stomach:
+   * thirst` for a thirstless patient. Nearest embeddings often mean the opposite: they read what a
+   * rubric is about more than which way it goes. Without the check, or when it fails, every rubric
+   * is kept.
+   */
+  async #withoutOpposites(matches: readonly SymptomMatch[]): Promise<readonly SymptomMatch[]> {
+    if (!this.#opposites) return matches
+    const pairs = matches.flatMap(({ symptom, rubrics }) => rubrics.map((rubric) => ({ symptom, rubric: rubric.text })))
+    let opposite: boolean[]
+    try {
+      opposite = await this.#opposites.opposites(pairs)
+    } catch (error) {
+      console.error('Checking rubrics for opposites failed; keeping them all', error)
+      return matches
+    }
+    let at = 0
+    return matches.map(({ symptom, rubrics }) => ({ symptom, rubrics: rubrics.filter(() => !opposite[at++]) }))
+  }
+}
+
+/** The first `limit` rubrics of each repertory, in order. */
+function nearestOfEach(rubrics: readonly Rubric[], limit: number): Rubric[] {
+  const counts = new Map<string, number>()
+  return rubrics.filter((rubric) => {
+    const count = counts.get(rubric.bookId) ?? 0
+    counts.set(rubric.bookId, count + 1)
+    return count < limit
+  })
 }
 
 /**
