@@ -394,16 +394,33 @@ describe('production retriever with a repertory', () => {
     expect(retrieval.repertories).toEqual([])
   })
 
-  it('searches the whole corpus when the question describes no patient', async () => {
+  it('searches the books but not the repertories when the question describes no patient', async () => {
     const { corpus, calls } = searching()
+    const repertorise = vi.fn()
 
-    const retrieval = await new ProductionRetriever(corpus, embedder, { repertory: repertoryOf() }).retrieve(
-      request('What is Sulphur?'),
-      { limit: 8 },
-    )
+    const retrieval = await new ProductionRetriever(corpus, embedder, {
+      repertory: { kind: async () => 'question', repertorise },
+    }).retrieve(request('What is Sulphur?'), { limit: 8 })
 
     expect(calls).toEqual([{ limit: 8 }])
+    expect(repertorise).not.toHaveBeenCalled()
     expect(retrieval.repertories).toEqual([])
+  })
+
+  it('searches nothing for an off-topic question', async () => {
+    const { corpus, calls } = searching()
+    const repertorise = vi.fn()
+    const rank = vi.fn()
+
+    const retrieval = await new ProductionRetriever(corpus, embedder, {
+      repertory: { kind: async () => 'off-topic', repertorise },
+      clinical: { rank },
+    }).retrieve(request('What is the capital of France?'), { limit: 8 })
+
+    expect(retrieval).toEqual({ sources: [], repertories: [], clinical: [] })
+    expect(calls).toEqual([])
+    expect(repertorise).not.toHaveBeenCalled()
+    expect(rank).not.toHaveBeenCalled()
   })
 
   it('sorts and ranks by the questions the search uses', async () => {
@@ -419,12 +436,10 @@ describe('production retriever with a repertory', () => {
       history: [{ role: 'user', content: 'A weepy woman.' }, { role: 'assistant', content: 'Pulsatilla.' }],
     })
 
-    expect(await retriever.kind(asked)).toBe('case')
     await retriever.retrieve(asked, { limit: 8 })
 
     const query = 'A weepy woman.\nShe is thirstless.'
     expect(seen).toEqual([query, query])
-    expect(await new ProductionRetriever(corpus, embedder).kind(asked)).toBe('question')
   })
 
   it('searches the whole corpus when repertorisation fails', async () => {

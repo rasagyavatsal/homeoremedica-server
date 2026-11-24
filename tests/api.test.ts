@@ -7,13 +7,11 @@ import { RateLimiter } from '../src/rate-limit.ts'
 import type { Settings } from '../src/runtime.ts'
 import type {
   BookSummary,
-  Cancellable,
   ChatOptions,
   ChatRequest,
   ChatResponse,
   CompactRequest,
   CompactResponse,
-  QuestionKind,
 } from '../src/contracts.ts'
 import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
 
@@ -54,15 +52,6 @@ class StubService implements ChatHandler {
     return response
   }
 
-  /** The signals the reading calls were given, to stop them by. */
-  readonly signals: (AbortSignal | undefined)[] = []
-
-  async kind(_request: ChatRequest, { signal }: Cancellable = {}): Promise<QuestionKind> {
-    this.signals.push(signal)
-    if (this.failure !== null) throw this.failure
-    return 'case'
-  }
-
   async compact(request: CompactRequest): Promise<CompactResponse> {
     this.compactions.push(request)
     if (this.failure !== null) throw this.failure
@@ -88,8 +77,6 @@ function setup(
     {
       rateLimiter,
       totalRateLimiter,
-      kindRateLimiter: null,
-      totalKindRateLimiter: null,
     },
   )
   const post = (body: unknown, headers: Record<string, string> = {}) =>
@@ -119,39 +106,6 @@ const read = (response: Response): Promise<any> => response.json()
 function quiet() {
   vi.spyOn(console, 'error').mockImplementation(() => {})
 }
-
-it('says whether a question describes a case before it is answered', async () => {
-  const { app, service } = setup()
-  const kind = (body: unknown) =>
-    app.request('/api/kind', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-
-  const response = await kind({ message: 'A weepy, thirstless woman.' })
-
-  expect(response.status).toBe(200)
-  expect(await read(response)).toEqual({ kind: 'case' })
-  expect((await kind({ message: ' ' })).status).toBe(422)
-  expect(service.requests).toEqual([])
-
-  quiet()
-  service.failure = new ProviderError('down')
-  expect((await kind({ message: 'A weepy woman.' })).status).toBe(502)
-})
-
-it('stops reading a question when its request is given up', async () => {
-  const { app, service } = setup()
-  const stop = new AbortController()
-
-  await app.request('/api/kind', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: 'A weepy woman.' }),
-    signal: stop.signal,
-  })
-  stop.abort()
-
-  expect(service.signals).toHaveLength(1)
-  expect(service.signals.every((signal) => signal?.aborted)).toBe(true)
-})
 
 it('health needs neither corpus nor provider configuration', async () => {
   const { app } = setup({ getService: unexpected('health must not initialize chat') })

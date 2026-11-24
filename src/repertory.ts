@@ -83,7 +83,7 @@ export interface Repertorisation {
 }
 
 export interface Repertoriser {
-  /** Whether the text describes a patient, decided before its symptoms are read. */
+  /** Whether the text describes a patient, asks about anything else, or is off-topic. */
   kind(text: string, options?: Cancellable): Promise<QuestionKind>
   /** Ranks remedies for the symptoms of the case the text describes. */
   repertorise(text: string): Promise<Repertorisation>

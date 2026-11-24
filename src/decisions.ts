@@ -166,22 +166,19 @@ export const NEW_SYMPTOM_CUTOFF = 0.5
 /**
  * Splits a case into its symptoms in the user's own words, so they can be searched without being
  * reworded: the case is cut at every full stop, comma and semicolon, and the decision model says
- * at each comma and semicolon whether a new symptom starts there. A text that is not a case has no
- * symptoms. When the decision model fails, the case is split at every comma.
+ * at each comma and semicolon whether a new symptom starts there. When the decision model fails,
+ * the case is split at every comma.
  */
 export class DecisionSymptomSplitter implements SymptomExtractor {
   readonly #decisions: Decisions
-  readonly #classifier: DecisionCaseClassifier
 
   constructor(options: DecisionOptions) {
     this.#decisions = new Decisions(options)
-    this.#classifier = new DecisionCaseClassifier(options)
   }
 
-  async extractSymptoms(text: string, options: Cancellable = {}): Promise<string[]> {
+  async extractSymptoms(text: string, { signal }: Cancellable = {}): Promise<string[]> {
     const sentences = casePieces(text)
-    const [kind, starts] = await Promise.all([this.#classifier.classify(text, options), this.#starts(text, sentences, options.signal)])
-    return kind === 'case' ? joinedPieces(sentences, starts) : []
+    return joinedPieces(sentences, await this.#starts(text, sentences, signal))
   }
 
   /** For each piece after a sentence's first, whether a new symptom starts there. */

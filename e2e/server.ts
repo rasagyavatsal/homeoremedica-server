@@ -15,7 +15,6 @@ import type {
   ChatResponse,
   CompactRequest,
   CompactResponse,
-  QuestionKind,
 } from '../src/contracts.ts'
 import { shouldCompact } from '../src/conversation.ts'
 import { ProviderTimeoutError } from '../src/errors.ts'
@@ -23,7 +22,6 @@ import { RateLimiter } from '../src/rate-limit.ts'
 import {
   API_KEY,
   AUTH_EMULATOR,
-  CASE,
   CHAT_LIMIT,
   E2E_PORT,
   FAIL_ONCE,
@@ -62,10 +60,6 @@ class ScriptedChat implements ChatHandler {
     return { answer, corpusVersion: 'e2e', model: 'scripted', sources: SOURCES, ...(compacted && { compacted }) }
   }
 
-  async kind({ message }: ChatRequest): Promise<QuestionKind> {
-    return message.includes(CASE) ? 'case' : 'question'
-  }
-
   async compact({ history }: CompactRequest, { signal }: { signal?: AbortSignal } = {}): Promise<CompactResponse> {
     await sleep(50, undefined, { signal })
     const questions = history.slice(0, -2).filter((turn) => turn.role === 'user')
@@ -82,7 +76,7 @@ const accounts = firebaseAccounts({
 })
 const app = createApp(
   { getService: async () => service, getAccounts: () => accounts, getWebOrigins: () => [WEB_E2E_URL] },
-  { rateLimiter: new RateLimiter([{ limit: CHAT_LIMIT, windowMs: 60_000 }]), totalRateLimiter: null, kindRateLimiter: null },
+  { rateLimiter: new RateLimiter([{ limit: CHAT_LIMIT, windowMs: 60_000 }]), totalRateLimiter: null },
 )
 
 const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port: E2E_PORT }, (info) => {

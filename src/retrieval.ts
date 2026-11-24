@@ -1,7 +1,6 @@
 /** Production query embedding and corpus search. */
 
 import {
-  type Cancellable,
   type ChatRequest,
   MAX_RETRIEVAL_QUERY_CHARS,
   type QuestionKind,
@@ -34,8 +33,9 @@ export class ProductionRetriever implements Retriever {
   readonly #clinical: ClinicalRanker | undefined
 
   /**
-   * Every book is searched for passages of its own. With a repertory, it also ranks remedies for
-   * the symptoms of a question that describes a patient, each repertory apart, and with `clinical`,
+   * Every book is searched for passages of its own. With a repertory, the question is sorted first:
+   * an off-topic one is not searched for, and for one that describes a patient remedies are ranked
+   * by its symptoms too, each repertory apart, and with `clinical`,
    * Clarke's remedies for the diseases the case names are ranked too. The rankings do not reorder
    * the passages: an answer gives each its own section, and weighing them into the search named
    * their polychrests a second time in place of the remedies the books found. A ranking that many
@@ -57,9 +57,13 @@ export class ProductionRetriever implements Retriever {
     // Earlier questions resolve follow-ups such as "what about its mental symptoms?". Answers are
     // left out: they are long enough to drown the question in both rankings.
     const query = searchQuery(request)
+    // An off-topic question has nothing in the books, and only a case has symptoms to search the
+    // repertories by.
+    const kind: QuestionKind = this.#repertory ? await this.#repertory.kind(query) : 'question'
+    if (kind === 'off-topic') return { sources: [], repertories: [], clinical: [] }
     const [passages, repertorisation, match] = await Promise.all([
       this.#embedder.embedQuery(query).then((embedding) => this.#corpus.search(query, embedding, { limit })),
-      this.#repertorisation(query),
+      kind === 'case' ? this.#repertorisation(query) : undefined,
       this.#clinicalMatch(query),
     ])
     // Each repertory ranks the remedies on its own, for an answer section of its own.
@@ -78,10 +82,6 @@ export class ProductionRetriever implements Retriever {
       repertories,
       clinical: match ? leadingClinicalRemedies(match) : [],
     }
-  }
-
-  async kind(request: ChatRequest, options?: Cancellable): Promise<QuestionKind> {
-    return this.#repertory ? this.#repertory.kind(searchQuery(request), options) : 'question'
   }
 
   /** Clarke's remedies for the diseases the query names, if they tell remedies apart. */

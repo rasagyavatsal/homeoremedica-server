@@ -141,17 +141,15 @@ describe('decision case classifier', () => {
 describe('decision symptom splitter', () => {
   const CASE = 'Stools green,\nsour and offensive. Worse at night; better lying.'
 
-  /** Answers the kind request and the split request, told apart by their state. */
-  const routed = (kind: Response, split: Response) => {
+  /** Answers the split request, keeping each body sent. */
+  const splitting = (split: Response) => {
     const bodies: { state: string; questions: Record<string, { instructions: string }> }[] = []
     const fetch: Fetch = async (_url, init) => {
-      const body = JSON.parse(String(init?.body))
-      bodies.push(body)
-      return body.state.startsWith('The latest questions') ? kind : split
+      bodies.push(JSON.parse(String(init?.body)))
+      return split
     }
     return { fetch, bodies }
   }
-  const kind = (choice: string) => json({ answers: { q0: { type: 'choice', choice } } })
 
   it('cuts a case at every full stop, comma and semicolon, joining the lines a sentence wraps across', () => {
     expect(casePieces(CASE)).toEqual([
@@ -161,26 +159,21 @@ describe('decision symptom splitter', () => {
   })
 
   it('joins the pieces where the decision model finds no new symptom starts', async () => {
-    const { fetch, bodies } = routed(kind('case'), answers(0.1, 0.9))
+    const { fetch, bodies } = splitting(answers(0.1, 0.9))
 
     const symptoms = await new DecisionSymptomSplitter({ apiKey: 'key', fetch }).extractSymptoms(CASE)
 
     expect(symptoms).toEqual(['Stools green, sour and offensive', 'Worse at night', 'better lying'])
-    const split = bodies.find((body) => body.state.startsWith('Case notes'))
+    const [split] = bodies
+    expect(bodies).toHaveLength(1)
     expect(split?.state).toBe(`Case notes a homoeopath wrote about a patient: ${JSON.stringify(CASE)}`)
     expect(split?.questions.q0?.instructions).toBe(
       'Sentence: "Stools green, sour and offensive.". Does "sour and offensive." begin a new symptom, rather than continue describing the one before it?',
     )
   })
 
-  it('reads no symptoms from a text that is not a case', async () => {
-    const { fetch } = routed(kind('question'), answers(0.9, 0.9))
-
-    expect(await new DecisionSymptomSplitter({ apiKey: 'key', fetch }).extractSymptoms(CASE)).toEqual([])
-  })
-
   it('splits the case at every comma when the decision model fails', async () => {
-    const { fetch } = routed(kind('case'), new Response('provider secret', { status: 500 }))
+    const { fetch } = splitting(new Response('provider secret', { status: 500 }))
 
     expect(await new DecisionSymptomSplitter({ apiKey: 'key', fetch }).extractSymptoms(CASE)).toEqual([
       'Stools green',

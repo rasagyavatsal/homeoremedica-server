@@ -6,7 +6,6 @@ import {
   type ChatRequest,
   ChatRequestSchema,
   type GenerateOptions,
-  type QuestionKind,
   type Retrieval,
   type Retriever,
 } from '../src/contracts.ts'
@@ -19,10 +18,6 @@ const request = (input: Record<string, unknown>): ChatRequest => ChatRequestSche
 class StubRetriever implements Retriever {
   searchCall: { request: ChatRequest; limit: number } | null = null
   failure: unknown = null
-
-  async kind(): Promise<QuestionKind> {
-    return 'case'
-  }
 
   async retrieve(request: ChatRequest, { limit }: { limit: number }): Promise<Retrieval> {
     this.searchCall = { request, limit }
@@ -237,27 +232,6 @@ it('answers without the model when retrieval finds no sources', async () => {
   expect(response.answer).toBe("That isn't something the books cover. Ask about a remedy, a symptom or a case.")
   expect(streamed).toEqual([response.answer])
   expect(response.sources).toEqual([])
-})
-
-it('answers an off-topic question without searching or the model', async () => {
-  const retriever = new StubRetriever()
-  const generator = new StubGenerator()
-  const sources: unknown[] = []
-
-  const response = await new ChatService({ retriever, generator }).chat(
-    request({ message: 'What is the capital of France?', offTopic: true }),
-    { onSources: (citations) => sources.push(citations) },
-  )
-
-  expect(retriever.searchCall).toBeNull()
-  expect(generator.generationPrompt).toBeNull()
-  expect(response.answer).toBe("That isn't something the books cover. Ask about a remedy, a symptom or a case.")
-  expect(response.sources).toEqual([])
-  expect(sources).toEqual([[]])
-})
-
-it('rejects an offTopic that is not a boolean', () => {
-  expect(() => request({ message: 'question', offTopic: 'yes' })).toThrow(/offTopic must be a boolean/)
 })
 
 it('rejects an oversized history budget', () => {

@@ -1,6 +1,5 @@
 import {
   type AnswerGenerator,
-  type Cancellable,
   CORPUS_VERSION,
   type ChatOptions,
   type ChatRequest,
@@ -13,7 +12,6 @@ import {
   MAX_GENERATED_ANSWER_CHARS,
   MAX_GENERATION_PROMPT_CHARS,
   MAX_TURN_CHARS,
-  type QuestionKind,
   type Retrieval,
   type Retriever,
 } from './contracts.ts'
@@ -67,10 +65,7 @@ export class ChatService {
       : undefined
     let retrieval: Retrieval
     try {
-      // An off-topic question has nothing in the books, so it gets the no-sources answer.
-      retrieval = request.offTopic
-        ? { sources: [], repertories: [], clinical: [] }
-        : await this.#retriever.retrieve(request, { limit: this.#sourceLimit })
+      retrieval = await this.#retriever.retrieve(request, { limit: this.#sourceLimit })
       // Reject an unusable corpus before paying for an answer.
       if (retrieval.sources.some((source) => source.text.length > MAX_CITATION_TEXT_CHARS)) {
         throw new RangeError('citation text is too long')
@@ -126,11 +121,6 @@ export class ChatService {
       sources: citations,
       ...(compacted && { compacted }),
     }
-  }
-
-  /** Whether a question describes a patient, decided before its symptoms are read. */
-  kind(request: ChatRequest, options?: Cancellable): Promise<QuestionKind> {
-    return this.#retriever.kind(request, options)
   }
 
   /** Condense all but the latest exchange, and any earlier summary, into a new summary. */
