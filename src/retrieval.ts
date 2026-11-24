@@ -57,13 +57,9 @@ export class ProductionRetriever implements Retriever {
     // Earlier questions resolve follow-ups such as "what about its mental symptoms?". Answers are
     // left out: they are long enough to drown the question in both rankings.
     const query = searchQuery(request)
-    // The books are searched by the symptoms a user confirmed, in place of the question they were
-    // read from, so they answer for the case as the user corrected it.
-    const confirmed = request.symptoms ?? []
-    const searched = confirmed.length ? confirmed.join('\n').slice(0, MAX_RETRIEVAL_QUERY_CHARS) : query
     const [passages, repertorisation, match] = await Promise.all([
-      this.#embedder.embedQuery(searched).then((embedding) => this.#corpus.search(searched, embedding, { limit })),
-      this.#repertorisation(query, request.symptoms),
+      this.#embedder.embedQuery(query).then((embedding) => this.#corpus.search(query, embedding, { limit })),
+      this.#repertorisation(query),
       this.#clinicalMatch(query),
     ])
     // Each repertory ranks the remedies on its own, for an answer section of its own.
@@ -101,11 +97,11 @@ export class ProductionRetriever implements Retriever {
     }
   }
 
-  /** The repertorisation of the case the query describes; of `symptoms` when the user confirmed them. */
-  async #repertorisation(query: string, symptoms: readonly string[] | undefined): Promise<Repertorisation | undefined> {
+  /** The repertorisation of the case the query describes. */
+  async #repertorisation(query: string): Promise<Repertorisation | undefined> {
     if (!this.#repertory) return undefined
     try {
-      return await this.#repertory.repertorise(query, symptoms)
+      return await this.#repertory.repertorise(query)
     } catch (error) {
       // The ranking is only a section of the answer; without it the books still answer.
       console.error('Repertorisation failed; searching without it', error)

@@ -408,33 +408,9 @@ it('rejects book filters', () => {
   expect(() => request({ message: 'question', bookIds: ['kent_lectures'] })).toThrow(/unexpected request field/)
 })
 
-it('answers by the symptoms a user confirmed and searches the books by them', async () => {
-  const retriever = new StubRetriever()
-  const generator = new StubGenerator()
-  const asked = { message: 'A weepy, thirsty woman.', symptoms: ['Mind: weeping', 'Stomach: thirstless'] }
-
-  await new ChatService({ retriever, generator }).chat(request(asked))
-
-  expect(generator.generationPrompt).toContain('<confirmed_symptoms>\nMind: weeping\nStomach: thirstless\n</confirmed_symptoms>')
-  expect(generator.generationPrompt).toContain('go by this list')
-  await new ChatService({ retriever, generator }).chat(request({ message: 'What is Sulphur?', symptoms: [] }))
-  expect(generator.generationPrompt).not.toContain('confirmed_')
-
-  const searched: string[] = []
-  const corpus: SearchableRelease = { search: async (query) => (searched.push(query), []) }
-  const embedder = { embedQuery: async (text: string) => (searched.push(text), [1.0]) }
-  const retrieve = (question: Parameters<typeof request>[0]) => new ProductionRetriever(corpus, embedder).retrieve(request(question), { limit: 8 })
-
-  // The confirmed symptoms stand in for the question they were read from.
-  await retrieve(asked)
-  const confirmed = 'Mind: weeping\nStomach: thirstless'
-  expect(searched).toEqual([confirmed, confirmed])
-
-  // With nothing confirmed, the books are searched by the question.
-  searched.length = 0
-  await retrieve({ message: 'She is unwell.', symptoms: [] })
-  await retrieve({ message: 'What is Sulphur?' })
-  expect(searched).toEqual(['She is unwell.', 'She is unwell.', 'What is Sulphur?', 'What is Sulphur?'])
+it('rejects confirmed symptoms and diseases', () => {
+  expect(() => request({ message: 'A weepy woman.', symptoms: ['Mind: weeping'] })).toThrow(/unexpected request field/)
+  expect(() => request({ message: 'A weepy woman.', diseases: ['asthma'] })).toThrow(/unexpected request field/)
 })
 
 it('production retriever searches on recent questions only', async () => {

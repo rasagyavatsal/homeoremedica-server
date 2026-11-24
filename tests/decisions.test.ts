@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { ChatRequestSchema, MAX_SYMPTOM_CHARS } from '../src/contracts.ts'
+import { MAX_SYMPTOM_CHARS } from '../src/contracts.ts'
 import {
   DecisionCaseClassifier,
   DecisionOpposites,
@@ -190,12 +190,11 @@ describe('decision symptom splitter', () => {
     ])
   })
 
-  it('keeps each symptom once and within the length a question may send back', () => {
+  it('keeps each symptom once and within the length a symptom may have', () => {
     const long = `Head: ${'pain, '.repeat(60)}`.trim()
 
     const symptoms = joinedPieces([[long], ['Thirstless.'], ['thirstless']], [])
 
     expect(symptoms).toEqual([long.slice(0, MAX_SYMPTOM_CHARS).trimEnd(), 'Thirstless'])
-    expect(ChatRequestSchema.parse({ message: 'A case.', symptoms }).symptoms).toEqual(symptoms)
   })
 })

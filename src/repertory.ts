@@ -85,8 +85,8 @@ export interface Repertorisation {
 export interface Repertoriser {
   /** Whether the text describes a patient, decided before its symptoms are read. */
   kind(text: string, options?: Cancellable): Promise<QuestionKind>
-  /** Ranks remedies for `symptoms`, or for the text's own when none are given. */
-  repertorise(text: string, symptoms?: readonly string[]): Promise<Repertorisation>
+  /** Ranks remedies for the symptoms of the case the text describes. */
+  repertorise(text: string): Promise<Repertorisation>
 }
 
 export interface SymptomExtractor {
@@ -141,8 +141,8 @@ export class Repertory implements Repertoriser {
     return this.#extractor.extractSymptoms(text, options)
   }
 
-  async repertorise(text: string, given?: readonly string[]): Promise<Repertorisation> {
-    const symptoms = given ?? (await this.symptoms(text))
+  async repertorise(text: string): Promise<Repertorisation> {
+    const symptoms = await this.symptoms(text)
     if (!symptoms.length) return { symptoms: [], remedies: [] }
     const embeddings = await this.#embedder.embedQueries(symptoms)
     const found = await this.#rubrics.search(embeddings, {

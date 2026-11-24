@@ -270,30 +270,6 @@ describe('Repertory', () => {
     expect(await repertory.repertorise('What is Sulphur?')).toEqual({ symptoms: [], remedies: [] })
     expect(embedQueries).not.toHaveBeenCalled()
   })
-
-  it('ranks by the symptoms it is given without reading the case', async () => {
-    const extractSymptoms = vi.fn(async () => ['Mind: weeping'])
-    const embedded: (readonly string[])[] = []
-    const repertory = new Repertory({
-      classifier,
-      extractor: { extractSymptoms },
-      embedder: {
-        async embedQueries(texts) {
-          embedded.push(texts)
-          return texts.map(() => [0])
-        },
-      },
-      rubrics: { search: async () => [[rubric('Stomach: thirstless', ['puls', 2])]] },
-    })
-
-    const result = await repertory.repertorise('case', ['Stomach: thirstless'])
-
-    expect(extractSymptoms).not.toHaveBeenCalled()
-    expect(embedded).toEqual([['Stomach: thirstless']])
-    expect(result.remedies.map((remedy) => remedy.remedyId)).toEqual(['puls'])
-    expect(await repertory.repertorise('case', [])).toEqual({ symptoms: [], remedies: [] })
-    expect(await repertory.symptoms('case')).toEqual(['Mind: weeping'])
-  })
 })
 
 describe('CombinedRubrics', () => {
@@ -435,20 +411,19 @@ describe('production retriever with a repertory', () => {
     const seen: unknown[] = []
     const repertory: Repertoriser = {
       kind: async (text) => (seen.push(text), 'case'),
-      repertorise: async (text, symptoms) => (seen.push([text, symptoms]), { symptoms: [], remedies: [] }),
+      repertorise: async (text) => (seen.push(text), { symptoms: [], remedies: [] }),
     }
     const retriever = new ProductionRetriever(corpus, embedder, { repertory })
     const asked = ChatRequestSchema.parse({
       message: 'She is thirstless.',
       history: [{ role: 'user', content: 'A weepy woman.' }, { role: 'assistant', content: 'Pulsatilla.' }],
-      symptoms: ['Stomach: thirstless'],
     })
 
     expect(await retriever.kind(asked)).toBe('case')
     await retriever.retrieve(asked, { limit: 8 })
 
     const query = 'A weepy woman.\nShe is thirstless.'
-    expect(seen).toEqual([query, [query, ['Stomach: thirstless']]])
+    expect(seen).toEqual([query, query])
     expect(await new ProductionRetriever(corpus, embedder).kind(asked)).toBe('question')
   })
 

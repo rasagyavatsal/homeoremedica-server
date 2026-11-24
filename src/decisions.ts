@@ -214,7 +214,7 @@ export function casePieces(text: string): string[][] {
 
 /**
  * Each sentence's pieces joined where `starts` says no new symptom starts, without the punctuation
- * that ended them, each once and no longer than a question may send back.
+ * that ended them, each once and no longer than MAX_SYMPTOM_CHARS.
  */
 export function joinedPieces(sentences: readonly (readonly string[])[], starts: readonly boolean[]): string[] {
   const symptoms = new Map<string, string>()
