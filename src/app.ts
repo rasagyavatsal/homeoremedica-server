@@ -25,10 +25,8 @@ import {
   type CompactRequest,
   CompactRequestSchema,
   type CompactResponse,
-  type DiseasesResponse,
   type KindResponse,
   type QuestionKind,
-  type SymptomsResponse,
   answerRatings,
   FeedbackSchema,
   SavedChatSchema,
@@ -49,8 +47,6 @@ export interface ChatHandler {
   chat(request: ChatRequest, options?: ChatOptions): Promise<ChatResponse>
   compact(request: CompactRequest, options?: { signal?: AbortSignal }): Promise<CompactResponse>
   kind(request: ChatRequest, options?: Cancellable): Promise<QuestionKind>
-  symptoms(request: ChatRequest, options?: Cancellable): Promise<string[]>
-  diseases(request: ChatRequest, options?: Cancellable): Promise<string[]>
 }
 
 export interface AppDependencies {
@@ -114,10 +110,6 @@ export function createApp(
     totalRateLimiter = new RateLimiter(TOTAL_CHAT_RATE_LIMITS),
     kindRateLimiter = new RateLimiter(),
     totalKindRateLimiter = new RateLimiter(TOTAL_CHAT_RATE_LIMITS),
-    symptomRateLimiter = new RateLimiter(),
-    totalSymptomRateLimiter = new RateLimiter(TOTAL_CHAT_RATE_LIMITS),
-    diseaseRateLimiter = new RateLimiter(),
-    totalDiseaseRateLimiter = new RateLimiter(TOTAL_CHAT_RATE_LIMITS),
     saveRateLimiter = new RateLimiter(CHAT_SAVE_RATE_LIMITS),
     feedbackRateLimiter = new RateLimiter(FEEDBACK_RATE_LIMITS),
   }: {
@@ -126,12 +118,6 @@ export function createApp(
     /** Counts the questions each client has had sorted into cases and others, apart from its questions. */
     kindRateLimiter?: RateLimiter | null
     totalKindRateLimiter?: RateLimiter | null
-    /** Counts the cases each client has read for symptoms, apart from its questions. */
-    symptomRateLimiter?: RateLimiter | null
-    totalSymptomRateLimiter?: RateLimiter | null
-    /** Counts the cases each client has read for diseases, apart from its questions. */
-    diseaseRateLimiter?: RateLimiter | null
-    totalDiseaseRateLimiter?: RateLimiter | null
     /** Counts the messages each user saves. */
     saveRateLimiter?: RateLimiter | null
     /** Counts the ratings each user sends. */
@@ -273,19 +259,16 @@ export function createApp(
   const questionLimits = limited(rateLimiter, totalRateLimiter)
   app.post('/api/chat', questionLimits)
   app.post('/api/chat/compact', questionLimits)
-  // Sorting a question and reading a case for its symptoms and diseases cost a model call each too, but they
-  // come before the same question is asked, so each is counted apart and does not take from the
-  // questions a client may ask.
+  // Sorting a question costs a model call too, but it comes before the same question is asked, so
+  // it is counted apart and does not take from the questions a client may ask.
   app.post('/api/kind', limited(kindRateLimiter, totalKindRateLimiter))
-  app.post('/api/symptoms', limited(symptomRateLimiter, totalSymptomRateLimiter))
-  app.post('/api/diseases', limited(diseaseRateLimiter, totalDiseaseRateLimiter))
 
   /**
    * Answers with what `read` makes of the question, before the question itself is asked. The
    * request's signal stops the model call when the browser gives up on it.
    */
   const beforeAsking = (
-    read: (service: ChatHandler, request: ChatRequest, options: Cancellable) => Promise<KindResponse | SymptomsResponse | DiseasesResponse>,
+    read: (service: ChatHandler, request: ChatRequest, options: Cancellable) => Promise<KindResponse>,
   ) =>
     async (c: Context) => {
       const request = await readBody(c, ChatRequestSchema)
@@ -305,8 +288,6 @@ export function createApp(
       }
     }
   app.post('/api/kind', beforeAsking(async (service, request, options) => ({ kind: await service.kind(request, options) })))
-  app.post('/api/symptoms', beforeAsking(async (service, request, options) => ({ symptoms: await service.symptoms(request, options) })))
-  app.post('/api/diseases', beforeAsking(async (service, request, options) => ({ diseases: await service.diseases(request, options) })))
 
   app.post('/api/chat', async (c) => {
     const request = await readBody(c, ChatRequestSchema)

@@ -140,7 +140,6 @@ describe('production retriever with Clarke', () => {
   const request = (message: string) => ChatRequestSchema.parse({ message })
   const repertory: Repertoriser = {
     kind: async () => 'case',
-    symptoms: async () => [],
     repertorise: async () => {
       const rubrics = [{ id: 'r', bookId: 'kent_repertory', chapter: 'Mind', text: 'Mind: weeping', remedies: [['puls', 1] as const] }]
       return { symptoms: [{ symptom: 'Mind: weeps', rubrics }], remedies: [{ remedyId: 'puls', symptoms: 1, grades: 1 }] }
@@ -191,9 +190,6 @@ describe('production retriever with Clarke', () => {
     expect(read).toEqual([])
     expect(calls).toEqual([{ limit: 8 }])
     expect(retrieval.clinical.map((remedy) => remedy.remedyName)).toEqual(['Coloc', 'Gnaph'])
-    expect(await retriever.diseases(request('Asthma at night.'))).toEqual(['asthma'])
-    expect(read).toEqual(['Asthma at night.'])
-    expect(await new ProductionRetriever(corpus, embedder).diseases(request('Asthma at night.'))).toEqual([])
   })
 
   it('leaves Clarke out when he lists many remedies for the one disease the case names', async () => {
@@ -216,7 +212,6 @@ describe('production retriever with Clarke', () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     const none = new Clinical({ extractor: { extractDiseases: async () => [] }, terms: new ClinicalTerms([]) })
     const failing: ClinicalRanker = {
-      diseases: async () => [],
       rank: async () => {
         throw new ProviderError('Z.AI chat request failed with status 500')
       },

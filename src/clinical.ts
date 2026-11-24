@@ -162,8 +162,6 @@ export class ModelDiseaseExtractor implements DiseaseExtractor {
 }
 
 export interface ClinicalRanker {
-  /** The diseases the case the text describes names; none when it names none. */
-  diseases(text: string, options?: Cancellable): Promise<string[]>
   /** Ranks remedies for `diseases`, or for the text's own when none are given. */
   rank(text: string, diseases?: readonly string[]): Promise<ClinicalMatch>
 }

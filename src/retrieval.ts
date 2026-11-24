@@ -88,14 +88,6 @@ export class ProductionRetriever implements Retriever {
     return this.#repertory ? this.#repertory.kind(searchQuery(request), options) : 'question'
   }
 
-  async symptoms(request: ChatRequest, options?: Cancellable): Promise<string[]> {
-    return this.#repertory ? this.#repertory.symptoms(searchQuery(request), options) : []
-  }
-
-  async diseases(request: ChatRequest, options?: Cancellable): Promise<string[]> {
-    return this.#clinical ? this.#clinical.diseases(searchQuery(request), options) : []
-  }
-
   /**
    * Clarke's remedies for the diseases the query names, if they tell remedies apart; for
    * `diseases` when the user confirmed them.

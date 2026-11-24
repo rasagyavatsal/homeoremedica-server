@@ -85,8 +85,6 @@ export interface Repertorisation {
 export interface Repertoriser {
   /** Whether the text describes a patient, decided before its symptoms are read. */
   kind(text: string, options?: Cancellable): Promise<QuestionKind>
-  /** The symptoms of the case the text describes; none when it describes no patient. */
-  symptoms(text: string, options?: Cancellable): Promise<string[]>
   /** Ranks remedies for `symptoms`, or for the text's own when none are given. */
   repertorise(text: string, symptoms?: readonly string[]): Promise<Repertorisation>
 }

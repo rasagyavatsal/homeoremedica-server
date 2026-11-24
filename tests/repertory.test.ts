@@ -367,7 +367,6 @@ describe('production retriever with a repertory', () => {
     const symptoms = [{ symptom: 'Mind: weeps', rubrics: [rubric('Mind: weeping', ...remedyIds.map((id): [string, number] => [id, 1]))] }]
     return {
       kind: async () => 'case',
-      symptoms: async () => [],
       repertorise: async () => ({ symptoms, remedies: rankRemedies(symptoms) }),
     }
   }
@@ -392,7 +391,6 @@ describe('production retriever with a repertory', () => {
     const symptoms = [{ symptom: 'Mind: weeps easily', rubrics: [rubric('Mind: weeping', ['pulsatilla', 3]), boericke] }]
     const repertory: Repertoriser = {
       kind: async () => 'case',
-    symptoms: async () => [],
       repertorise: async () => ({ symptoms, remedies: rankRemedies(symptoms) }),
     }
 
@@ -432,12 +430,11 @@ describe('production retriever with a repertory', () => {
     expect(retrieval.repertories).toEqual([])
   })
 
-  it('sorts, reads symptoms from, and ranks by, the questions the search uses', async () => {
+  it('sorts and ranks by the questions the search uses', async () => {
     const { corpus } = searching()
     const seen: unknown[] = []
     const repertory: Repertoriser = {
       kind: async (text) => (seen.push(text), 'case'),
-      symptoms: async (text) => (seen.push(text), ['Mind: weeping']),
       repertorise: async (text, symptoms) => (seen.push([text, symptoms]), { symptoms: [], remedies: [] }),
     }
     const retriever = new ProductionRetriever(corpus, embedder, { repertory })
@@ -448,13 +445,11 @@ describe('production retriever with a repertory', () => {
     })
 
     expect(await retriever.kind(asked)).toBe('case')
-    expect(await retriever.symptoms(asked)).toEqual(['Mind: weeping'])
     await retriever.retrieve(asked, { limit: 8 })
 
     const query = 'A weepy woman.\nShe is thirstless.'
-    expect(seen).toEqual([query, query, [query, ['Stomach: thirstless']]])
+    expect(seen).toEqual([query, [query, ['Stomach: thirstless']]])
     expect(await new ProductionRetriever(corpus, embedder).kind(asked)).toBe('question')
-    expect(await new ProductionRetriever(corpus, embedder).symptoms(asked)).toEqual([])
   })
 
   it('searches the whole corpus when repertorisation fails', async () => {
@@ -462,7 +457,6 @@ describe('production retriever with a repertory', () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     const repertory: Repertoriser = {
       kind: async () => 'case',
-    symptoms: async () => [],
       repertorise: async () => {
         throw new ProviderError('Z.AI chat request failed with status 500')
       },
