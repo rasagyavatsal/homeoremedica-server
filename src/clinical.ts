@@ -162,8 +162,8 @@ export class ModelDiseaseExtractor implements DiseaseExtractor {
 }
 
 export interface ClinicalRanker {
-  /** Ranks remedies for `diseases`, or for the text's own when none are given. */
-  rank(text: string, diseases?: readonly string[]): Promise<ClinicalMatch>
+  /** Ranks remedies for the diseases the text names. */
+  rank(text: string): Promise<ClinicalMatch>
 }
 
 /** Clarke's remedies for the diseases a question names. */
@@ -176,12 +176,8 @@ export class Clinical implements ClinicalRanker {
     this.#terms = terms
   }
 
-  diseases(text: string, options?: Cancellable): Promise<string[]> {
-    return this.#extractor.extractDiseases(text, options)
-  }
-
-  async rank(text: string, given?: readonly string[]): Promise<ClinicalMatch> {
-    return this.#terms.match(given ?? (await this.diseases(text)))
+  async rank(text: string): Promise<ClinicalMatch> {
+    return this.#terms.match(await this.#extractor.extractDiseases(text))
   }
 }
 

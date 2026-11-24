@@ -154,17 +154,6 @@ it('stops reading a question when its request is given up', async () => {
   expect(service.signals.every((signal) => signal?.aborted)).toBe(true)
 })
 
-it('takes the diseases a user confirmed with a question', async () => {
-  const { service, post } = setup()
-
-  expect((await post({ message: 'Left sciatica.', diseases: [' sciatica ', 'lumbago'] })).status).toBe(200)
-  expect(service.requests[0]?.diseases).toEqual(['sciatica', 'lumbago'])
-
-  expect((await post({ message: 'Left sciatica.', diseases: [' '] })).status).toBe(422)
-  expect((await post({ message: 'Left sciatica.', diseases: Array.from({ length: 16 }, () => 'sciatica') })).status).toBe(422)
-  expect((await post({ message: 'Left sciatica.', diseases: ['x'.repeat(201)] })).status).toBe(422)
-})
-
 it('takes the symptoms a user confirmed with a question', async () => {
   const { service, post } = setup()
 

@@ -176,22 +176,6 @@ describe('production retriever with Clarke', () => {
     ])
   })
 
-  it('ranks by the diseases a user confirmed without reading the case, and reads them for review', async () => {
-    const { corpus, calls } = searching()
-    const read: string[] = []
-    const reading = new Clinical({
-      extractor: { extractDiseases: async (text) => (read.push(text), ['asthma']) },
-      terms: new ClinicalTerms([{ text: 'sciatica', remedies: ['gnaph', 'coloc'] }]),
-    })
-    const retriever = new ProductionRetriever(corpus, embedder, { clinical: reading })
-
-    const retrieval = await retriever.retrieve({ ...request('A painful leg.'), diseases: ['sciatica'] }, { limit: 8 })
-
-    expect(read).toEqual([])
-    expect(calls).toEqual([{ limit: 8 }])
-    expect(retrieval.clinical.map((remedy) => remedy.remedyName)).toEqual(['Coloc', 'Gnaph'])
-  })
-
   it('leaves Clarke out when he lists many remedies for the one disease the case names', async () => {
     const { corpus } = searching()
     const common = new Clinical({

@@ -57,14 +57,14 @@ export class ProductionRetriever implements Retriever {
     // Earlier questions resolve follow-ups such as "what about its mental symptoms?". Answers are
     // left out: they are long enough to drown the question in both rankings.
     const query = searchQuery(request)
-    // The books are searched by the symptoms and diseases a user confirmed, in place of the
-    // question they were read from, so they answer for the case as the user corrected it.
-    const confirmed = [...(request.symptoms ?? []), ...(request.diseases ?? [])]
+    // The books are searched by the symptoms a user confirmed, in place of the question they were
+    // read from, so they answer for the case as the user corrected it.
+    const confirmed = request.symptoms ?? []
     const searched = confirmed.length ? confirmed.join('\n').slice(0, MAX_RETRIEVAL_QUERY_CHARS) : query
     const [passages, repertorisation, match] = await Promise.all([
       this.#embedder.embedQuery(searched).then((embedding) => this.#corpus.search(searched, embedding, { limit })),
       this.#repertorisation(query, request.symptoms),
-      this.#clinicalMatch(query, request.diseases),
+      this.#clinicalMatch(query),
     ])
     // Each repertory ranks the remedies on its own, for an answer section of its own.
     const repertories: RepertoryRanking[] = []
@@ -88,14 +88,11 @@ export class ProductionRetriever implements Retriever {
     return this.#repertory ? this.#repertory.kind(searchQuery(request), options) : 'question'
   }
 
-  /**
-   * Clarke's remedies for the diseases the query names, if they tell remedies apart; for
-   * `diseases` when the user confirmed them.
-   */
-  async #clinicalMatch(query: string, diseases: readonly string[] | undefined): Promise<ClinicalMatch | undefined> {
+  /** Clarke's remedies for the diseases the query names, if they tell remedies apart. */
+  async #clinicalMatch(query: string): Promise<ClinicalMatch | undefined> {
     if (!this.#clinical) return undefined
     try {
-      const match = await this.#clinical.rank(query, diseases)
+      const match = await this.#clinical.rank(query)
       return decisiveMatch(match) ? match : undefined
     } catch (error) {
       // Like the repertory's, Clarke's ranking is only a section of the answer.
