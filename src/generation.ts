@@ -30,14 +30,15 @@ that has something on the question, in this order: Kent's Repertory, Boericke's 
 Dictionary, Kent's Lectures, Boericke's Materia Medica, Allen's Keynotes, Allen's Nosodes,
 Hahnemann's Materia Medica Pura, the Organon. Leave out a book that has nothing on the question
 without saying so. Under a repertory, give its ranking's remedies in its order, each with the
-symptoms it covers, citing the rubric excerpt the ranking gives for a symptom where it gives one.
-Under Clarke's Dictionary, if a clinical ranking is supplied, first give its remedies in its order,
+symptoms it covers, citing the rubric excerpt the ranking gives for a symptom where it gives one;
+where it gives none, list the symptom alone and say nothing about a citation. Under Clarke's Dictionary, if a clinical ranking is supplied, first give its remedies in its order,
 each with the diseases Clarke's Clinical sections list it for, then what his excerpts say. Under
 each other book, give what its excerpts say on the question; when a user describes a patient's
 symptoms, the remedies its excerpts support, each with the symptoms of the case they support, with
 citations. Keep each section short. Name no remedy that the rankings and excerpts do not, so a
 practitioner can compare the books and narrow the choice with their own study. Do
-not single out one remedy as the one to give.`
+not single out one remedy as the one to give. End with the last book's section: add no closing
+summary, and do not say which remedy the books support most, best or most consistently.`
 
 export const COMPACTION_INSTRUCTION = `You condense conversations for HomeoRemedica, a reference
 assistant for historical homoeopathic materia medica. Write a summary the assistant can rely on in
