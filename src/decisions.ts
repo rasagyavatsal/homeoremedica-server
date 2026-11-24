@@ -1,10 +1,10 @@
-/** Decisions from a decision model through OpenRouter: rubrics that oppose a symptom, and a question's kind. */
+/** Decisions from a decision model through OpenRouter: a question's kind, a case's symptoms and the rubrics that oppose them. */
 
-import type { Cancellable, QuestionKind } from './contracts.ts'
+import { type Cancellable, MAX_SYMPTOM_CHARS, MAX_SYMPTOMS, type QuestionKind } from './contracts.ts'
 import { ConfigurationError, ProviderError } from './errors.ts'
 import { DEFAULT_OPENROUTER_BASE_URL } from './embeddings.ts'
 import { type Fetch, isRecord, readJson, send } from './http.ts'
-import type { CaseClassifier } from './repertory.ts'
+import type { CaseClassifier, SymptomExtractor } from './repertory.ts'
 
 /**
  * Liquid's d1.2-ultra removed fewer rubrics than Baseten's bison-1 on 19 cured cases, more of them
@@ -69,8 +69,17 @@ class Decisions {
     this.#timeoutMs = timeoutMs
   }
 
-  /** Each question's answer, in the order asked, from DECISION_MODEL or, when it is at capacity, FALLBACK_DECISION_MODEL. */
+  /** Each question's answer, in the order asked, in requests of at most MAX_DECISION_QUESTIONS sent together. */
   async answer(state: string, questions: readonly object[], signal?: AbortSignal): Promise<Record<string, unknown>[]> {
+    const batches: (readonly object[])[] = []
+    for (let start = 0; start < questions.length; start += MAX_DECISION_QUESTIONS) {
+      batches.push(questions.slice(start, start + MAX_DECISION_QUESTIONS))
+    }
+    return (await Promise.all(batches.map((batch) => this.#request(state, batch, signal)))).flat()
+  }
+
+  /** From DECISION_MODEL or, when it is at capacity, FALLBACK_DECISION_MODEL. */
+  async #request(state: string, questions: readonly object[], signal?: AbortSignal): Promise<Record<string, unknown>[]> {
     const ask = (model: string) =>
       send(
         this.#fetch,
@@ -102,7 +111,7 @@ class Decisions {
   }
 }
 
-/** Asks in requests of at most MAX_DECISION_QUESTIONS, sent together. */
+/** For each pair, whether the rubric states the opposite of the symptom. */
 export class DecisionOpposites implements OppositeCheck {
   readonly #decisions: Decisions
 
@@ -111,14 +120,6 @@ export class DecisionOpposites implements OppositeCheck {
   }
 
   async opposites(pairs: readonly SymptomRubric[]): Promise<boolean[]> {
-    const batches: SymptomRubric[][] = []
-    for (let start = 0; start < pairs.length; start += MAX_DECISION_QUESTIONS) {
-      batches.push(pairs.slice(start, start + MAX_DECISION_QUESTIONS))
-    }
-    return (await Promise.all(batches.map((batch) => this.#decide(batch)))).flat()
-  }
-
-  async #decide(pairs: readonly SymptomRubric[]): Promise<boolean[]> {
     const answers = await this.#decisions.answer(
       'Symptoms of a homoeopathic case, each paired with a candidate rubric from a repertory.',
       pairs.map(({ symptom, rubric }) => ({
@@ -126,40 +127,117 @@ export class DecisionOpposites implements OppositeCheck {
         instructions: `Symptom: ${JSON.stringify(symptom)}. Rubric: ${JSON.stringify(rubric)}. Does the rubric state the opposite of the symptom?`,
       })),
     )
-    return answers.map(({ noul }) => {
-      if (typeof noul !== 'number') throw new ProviderError(`${LABEL} returned no answer for a question`)
-      return noul >= OPPOSITE_CUTOFF
-    })
+    return answers.map((answer) => probability(answer) >= OPPOSITE_CUTOFF)
   }
 }
 
 /**
  * Sorts a question with the decision model, which sorted 56 test questions as well as the chat model
- * in half the time; the fallback sorts it when the decision model fails.
+ * in half the time. When it fails, the question is taken for a case, so its symptoms are read.
  */
 export class DecisionCaseClassifier implements CaseClassifier {
   readonly #decisions: Decisions
-  readonly #fallback: CaseClassifier
 
-  constructor({ fallback, ...options }: DecisionOptions & { fallback: CaseClassifier }) {
+  constructor(options: DecisionOptions) {
     this.#decisions = new Decisions(options)
-    this.#fallback = fallback
   }
 
-  async classify(text: string, options: Cancellable = {}): Promise<QuestionKind> {
+  async classify(text: string, { signal }: Cancellable = {}): Promise<QuestionKind> {
     try {
       const [answer] = await this.#decisions.answer(
         `The latest questions a user put to a homoeopathic reference, oldest first: ${JSON.stringify(text)}`,
         [{ type: 'choice', instructions: 'What kind of message is the latest question?', criteria: KIND_CRITERIA }],
-        options.signal,
+        signal,
       )
       const kind = answer?.choice
       if (kind === 'case' || kind === 'question' || kind === 'off-topic') return kind
       throw new ProviderError(`${LABEL} returned no answer for a question`)
     } catch (error) {
-      if (options.signal?.aborted) throw error
-      console.error('Sorting the question with the decision model failed; asking the chat model', error)
-      return this.#fallback.classify(text, options)
+      if (signal?.aborted) throw error
+      console.error('Sorting the question with the decision model failed; taking it for a case', error)
+      return 'case'
     }
   }
+}
+
+/** A new symptom starts at a comma or semicolon from this probability. */
+export const NEW_SYMPTOM_CUTOFF = 0.5
+
+/**
+ * Splits a case into its symptoms in the user's own words, so they can be searched without being
+ * reworded: the case is cut at every full stop, comma and semicolon, and the decision model says
+ * at each comma and semicolon whether a new symptom starts there. A text that is not a case has no
+ * symptoms. When the decision model fails, the case is split at every comma.
+ */
+export class DecisionSymptomSplitter implements SymptomExtractor {
+  readonly #decisions: Decisions
+  readonly #classifier: DecisionCaseClassifier
+
+  constructor(options: DecisionOptions) {
+    this.#decisions = new Decisions(options)
+    this.#classifier = new DecisionCaseClassifier(options)
+  }
+
+  async extractSymptoms(text: string, options: Cancellable = {}): Promise<string[]> {
+    const sentences = casePieces(text)
+    const [kind, starts] = await Promise.all([this.#classifier.classify(text, options), this.#starts(text, sentences, options.signal)])
+    return kind === 'case' ? joinedPieces(sentences, starts) : []
+  }
+
+  /** For each piece after a sentence's first, whether a new symptom starts there. */
+  async #starts(text: string, sentences: readonly (readonly string[])[], signal?: AbortSignal): Promise<boolean[]> {
+    const questions = sentences.flatMap((pieces) =>
+      pieces.slice(1).map((piece) => ({
+        type: 'noul',
+        instructions: `Sentence: ${JSON.stringify(pieces.join(' '))}. Does ${JSON.stringify(piece)} begin a new symptom, rather than continue describing the one before it?`,
+      })),
+    )
+    try {
+      const answers = await this.#decisions.answer(`Case notes a homoeopath wrote about a patient: ${JSON.stringify(text)}`, questions, signal)
+      return answers.map((answer) => probability(answer) >= NEW_SYMPTOM_CUTOFF)
+    } catch (error) {
+      if (signal?.aborted) throw error
+      console.error('Splitting the case with the decision model failed; splitting it at every comma', error)
+      return questions.map(() => true)
+    }
+  }
+}
+
+/** Each sentence of a case cut after every comma and semicolon; lines a sentence wraps across are joined. */
+export function casePieces(text: string): string[][] {
+  return text
+    .replace(/\s*\n\s*/g, ' ')
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.split(/(?<=[,;])\s+/).map((piece) => piece.trim()).filter(Boolean))
+    .filter((pieces) => pieces.length)
+}
+
+/**
+ * Each sentence's pieces joined where `starts` says no new symptom starts, without the punctuation
+ * that ended them, each once and no longer than a question may send back.
+ */
+export function joinedPieces(sentences: readonly (readonly string[])[], starts: readonly boolean[]): string[] {
+  const symptoms = new Map<string, string>()
+  const add = (piece: string) => {
+    const symptom = piece.replace(/[,;.]+$/, '').slice(0, MAX_SYMPTOM_CHARS).trimEnd()
+    const key = symptom.toLowerCase()
+    if (symptom && !symptoms.has(key)) symptoms.set(key, symptom)
+  }
+  let at = 0
+  for (const [first, ...rest] of sentences) {
+    let current = first ?? ''
+    for (const piece of rest) {
+      if (starts[at++]) {
+        add(current)
+        current = piece
+      } else current += ` ${piece}`
+    }
+    add(current)
+  }
+  return [...symptoms.values()].slice(0, MAX_SYMPTOMS)
+}
+
+function probability({ noul }: Record<string, unknown>): number {
+  if (typeof noul !== 'number') throw new ProviderError(`${LABEL} returned no answer for a question`)
+  return noul
 }

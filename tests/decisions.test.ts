@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import type { QuestionKind } from '../src/contracts.ts'
+import { ChatRequestSchema, MAX_SYMPTOM_CHARS } from '../src/contracts.ts'
 import {
   DecisionCaseClassifier,
   DecisionOpposites,
+  DecisionSymptomSplitter,
   FALLBACK_DECISION_MODEL,
   KIND_CRITERIA,
   MAX_DECISION_QUESTIONS,
+  casePieces,
+  joinedPieces,
 } from '../src/decisions.ts'
 import { ProviderError } from '../src/errors.ts'
 import type { Fetch } from '../src/http.ts'
@@ -94,20 +97,13 @@ describe('decision opposites', () => {
 
 describe('decision case classifier', () => {
   const choice = (kind: string) => json({ answers: { q0: { type: 'choice', choice: kind } } })
-  const fallback = (kind: QuestionKind) => {
-    const calls: string[] = []
-    return { calls, async classify(text: string) { calls.push(text); return kind } }
-  }
 
   it('asks the decision model to choose the kind of the latest question', async () => {
     const fetch = fakeFetch(choice('off-topic'))
-    const backup = fallback('case')
-    const stop = new AbortController()
 
-    const kind = await new DecisionCaseClassifier({ apiKey: 'key', fetch, fallback: backup }).classify('What is 17 times 23?', stop)
+    const kind = await new DecisionCaseClassifier({ apiKey: 'key', fetch }).classify('What is 17 times 23?')
 
     expect(kind).toBe('off-topic')
-    expect(backup.calls).toEqual([])
     expect(fetch.calls[0]?.url).toBe('https://openrouter.ai/api/alpha/decisions')
     expect(fetch.calls[0]?.body).toMatchObject({
       model: 'liquid/d1.2-ultra',
@@ -120,33 +116,86 @@ describe('decision case classifier', () => {
     ['fails', new Response('provider secret', { status: 500 })],
     ['gives no choice', json({ answers: { q0: { type: 'choice' } } })],
     ['chooses another kind', choice('remedy')],
-  ])('asks the fallback when the decision model %s', async (_, response) => {
-    const backup = fallback('question')
-
-    const kind = await new DecisionCaseClassifier({ apiKey: 'key', fetch: fakeFetch(response), fallback: backup }).classify('What is Sulphur?')
-
-    expect(kind).toBe('question')
-    expect(backup.calls).toEqual(['What is Sulphur?'])
+  ])('takes the question for a case when the decision model %s', async (_, response) => {
+    expect(await new DecisionCaseClassifier({ apiKey: 'key', fetch: fakeFetch(response) }).classify('What is Sulphur?')).toBe('case')
   })
 
-  it('does not ask the fallback once the question is cancelled', async () => {
+  it('fails once the question is cancelled', async () => {
     const stop = new AbortController()
     stop.abort()
-    const backup = fallback('question')
     const fetch: Fetch = async (_url, init) => {
       init?.signal?.throwIfAborted()
-      return choice('case')
+      return choice('question')
     }
 
-    const error = await new DecisionCaseClassifier({ apiKey: 'key', fetch, fallback: backup })
-      .classify('What is Sulphur?', stop)
-      .catch((error: unknown) => error)
+    const error = await new DecisionCaseClassifier({ apiKey: 'key', fetch }).classify('What is Sulphur?', stop).catch((error: unknown) => error)
 
     expect(error).toBeInstanceOf(ProviderError)
-    expect(backup.calls).toEqual([])
   })
 
   it('requires a key', () => {
-    expect(() => new DecisionCaseClassifier({ apiKey: undefined, fallback: fallback('case') })).toThrow(/OPENROUTER_API_KEY/)
+    expect(() => new DecisionCaseClassifier({ apiKey: undefined })).toThrow(/OPENROUTER_API_KEY/)
+  })
+})
+
+describe('decision symptom splitter', () => {
+  const CASE = 'Stools green,\nsour and offensive. Worse at night; better lying.'
+
+  /** Answers the kind request and the split request, told apart by their state. */
+  const routed = (kind: Response, split: Response) => {
+    const bodies: { state: string; questions: Record<string, { instructions: string }> }[] = []
+    const fetch: Fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body))
+      bodies.push(body)
+      return body.state.startsWith('The latest questions') ? kind : split
+    }
+    return { fetch, bodies }
+  }
+  const kind = (choice: string) => json({ answers: { q0: { type: 'choice', choice } } })
+
+  it('cuts a case at every full stop, comma and semicolon, joining the lines a sentence wraps across', () => {
+    expect(casePieces(CASE)).toEqual([
+      ['Stools green,', 'sour and offensive.'],
+      ['Worse at night;', 'better lying.'],
+    ])
+  })
+
+  it('joins the pieces where the decision model finds no new symptom starts', async () => {
+    const { fetch, bodies } = routed(kind('case'), answers(0.1, 0.9))
+
+    const symptoms = await new DecisionSymptomSplitter({ apiKey: 'key', fetch }).extractSymptoms(CASE)
+
+    expect(symptoms).toEqual(['Stools green, sour and offensive', 'Worse at night', 'better lying'])
+    const split = bodies.find((body) => body.state.startsWith('Case notes'))
+    expect(split?.state).toBe(`Case notes a homoeopath wrote about a patient: ${JSON.stringify(CASE)}`)
+    expect(split?.questions.q0?.instructions).toBe(
+      'Sentence: "Stools green, sour and offensive.". Does "sour and offensive." begin a new symptom, rather than continue describing the one before it?',
+    )
+  })
+
+  it('reads no symptoms from a text that is not a case', async () => {
+    const { fetch } = routed(kind('question'), answers(0.9, 0.9))
+
+    expect(await new DecisionSymptomSplitter({ apiKey: 'key', fetch }).extractSymptoms(CASE)).toEqual([])
+  })
+
+  it('splits the case at every comma when the decision model fails', async () => {
+    const { fetch } = routed(kind('case'), new Response('provider secret', { status: 500 }))
+
+    expect(await new DecisionSymptomSplitter({ apiKey: 'key', fetch }).extractSymptoms(CASE)).toEqual([
+      'Stools green',
+      'sour and offensive',
+      'Worse at night',
+      'better lying',
+    ])
+  })
+
+  it('keeps each symptom once and within the length a question may send back', () => {
+    const long = `Head: ${'pain, '.repeat(60)}`.trim()
+
+    const symptoms = joinedPieces([[long], ['Thirstless.'], ['thirstless']], [])
+
+    expect(symptoms).toEqual([long.slice(0, MAX_SYMPTOM_CHARS).trimEnd(), 'Thirstless'])
+    expect(ChatRequestSchema.parse({ message: 'A case.', symptoms }).symptoms).toEqual(symptoms)
   })
 })

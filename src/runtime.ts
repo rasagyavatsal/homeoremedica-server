@@ -6,7 +6,7 @@ import { parseEnv } from 'node:util'
 
 import { type Accounts, firebaseAccounts } from './accounts.ts'
 import { Clinical, ClinicalTerms, type DiseaseExtractor, loadClinicalTerms, ModelDiseaseExtractor } from './clinical.ts'
-import { DecisionCaseClassifier, DecisionOpposites, type OppositeCheck } from './decisions.ts'
+import { DecisionCaseClassifier, DecisionOpposites, DecisionSymptomSplitter, type OppositeCheck } from './decisions.ts'
 import { ConfigurationError } from './errors.ts'
 import { ZaiChatClient } from './generation.ts'
 import { ChatService } from './service.ts'
@@ -14,12 +14,9 @@ import { VoyageQueryEmbedder } from './embeddings.ts'
 import { CorpusError, QdrantCorpus } from './qdrant.ts'
 import {
   BOERICKE_COLLECTION,
-  CLASSIFICATION_MAX_OUTPUT_TOKENS,
   type CaseClassifier,
   CombinedRubrics,
   EXTRACTION_MAX_OUTPUT_TOKENS,
-  ModelCaseClassifier,
-  ModelSymptomExtractor,
   QdrantRubrics,
   REPERTORY_COLLECTION,
   Repertory,
@@ -110,7 +107,7 @@ export async function buildService(settings: Settings): Promise<ChatService> {
 }
 
 /**
- * Repertorisation with the answer model, checked to have its Qdrant collections. With several
+ * Repertorisation with the decision model, checked to have its Qdrant collections. With several
  * collections, each symptom is matched to its nearest rubrics in each; with `opposites`, less those
  * that state its opposite.
  */
@@ -141,27 +138,14 @@ export async function loadRepertory(
   return new Repertory({ classifier, extractor, embedder, rubrics, opposites })
 }
 
-/**
- * The decision model decides whether a question is a case. When it fails, the answer model decides,
- * with little reasoning so the decision is quick.
- */
+/** The decision model decides whether a question is a case. */
 export function caseClassifier(settings: Settings): CaseClassifier {
-  return new DecisionCaseClassifier({
-    apiKey: settings.openrouterApiKey,
-    fallback: new ModelCaseClassifier(
-      new ZaiChatClient({
-        apiKey: settings.zaiApiKey,
-        model: settings.model,
-        maxOutputTokens: CLASSIFICATION_MAX_OUTPUT_TOKENS,
-        temperature: 0,
-        reasoningEffort: 'low',
-      }),
-    ),
-  })
+  return new DecisionCaseClassifier({ apiKey: settings.openrouterApiKey })
 }
 
+/** The decision model splits a case into its symptoms, in the user's own words. */
 export function symptomExtractor(settings: Settings): SymptomExtractor {
-  return new ModelSymptomExtractor(extractionClient(settings))
+  return new DecisionSymptomSplitter({ apiKey: settings.openrouterApiKey })
 }
 
 /** Clarke's clinical terms from Qdrant, matched to the diseases the answer model names. */
@@ -180,7 +164,7 @@ export function diseaseExtractor(settings: Settings): DiseaseExtractor {
   return new ModelDiseaseExtractor(extractionClient(settings))
 }
 
-/** The answer model as symptom and disease extraction ask it: reasoning as much as it can, and as steady as it goes. */
+/** The answer model as disease extraction asks it: reasoning as much as it can, and as steady as it goes. */
 function extractionClient(settings: Settings): ZaiChatClient {
   return new ZaiChatClient({
     apiKey: settings.zaiApiKey,

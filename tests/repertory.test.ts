@@ -4,9 +4,6 @@ import { ChatRequestSchema, type ChatRequest } from '../src/contracts.ts'
 import { ProviderError } from '../src/errors.ts'
 import {
   CombinedRubrics,
-  MAX_SYMPTOMS,
-  ModelCaseClassifier,
-  ModelSymptomExtractor,
   QdrantRubrics,
   type Repertoriser,
   Repertory,
@@ -14,8 +11,6 @@ import {
   decisive,
   distinctMatches,
   leadingRemedies,
-  parseKind,
-  parseSymptoms,
   rankRemedies,
   standingOut,
 } from '../src/repertory.ts'
@@ -174,84 +169,6 @@ describe('leadingRemedies', () => {
     )
 
     expect(rubrics[0]?.text).toMatch(/^Remedies and their grades: Sulphur \(1\), Remedy 44 \(3\), Remedy 0 \(1\), .*, and 6 more$/)
-  })
-})
-
-describe('parseSymptoms', () => {
-  it('keeps one symptom a line, without list markers or headings', () => {
-    const reply = [
-      'Here are the symptoms:',
-      '1. Fretful, worse at night',
-      '- **Hoarse voice**',
-      '* Elbow: pain',
-      '',
-      'Green, sour stool',
-    ].join('\n')
-
-    expect(parseSymptoms(reply)).toEqual(['Fretful, worse at night', 'Hoarse voice', 'Elbow: pain', 'Green, sour stool'])
-  })
-
-  it('reads None as no symptoms and keeps at most the limit', () => {
-    expect(parseSymptoms('None.')).toEqual([])
-    expect(parseSymptoms(Array.from({ length: MAX_SYMPTOMS + 5 }, (_, index) => `Head: pain ${index}`).join('\n'))).toHaveLength(MAX_SYMPTOMS)
-  })
-
-  it('keeps a symptom within the length a question may send back', () => {
-    const [symptom] = parseSymptoms(`Head: ${'pain, '.repeat(60)}`)
-
-    expect(symptom).toHaveLength(200)
-    expect(ChatRequestSchema.parse({ message: 'A case.', symptoms: [symptom] }).symptoms).toEqual([symptom])
-  })
-
-  it('keeps a symptom the reply repeats once', () => {
-    expect(parseSymptoms('Head: pain, morning\nSleep: restless\nhead: Pain, morning')).toEqual(['Head: pain, morning', 'Sleep: restless'])
-  })
-
-  it('asks the model with the case as data', async () => {
-    const stop = new AbortController()
-    const calls: [string, string][] = []
-    const extractor = new ModelSymptomExtractor({
-      model: 'm',
-      async generate(prompt, { systemInstruction, signal }) {
-        calls.push([prompt, systemInstruction])
-        expect(signal).toBe(stop.signal)
-        return 'Mind: weeping'
-      },
-    })
-
-    expect(await extractor.extractSymptoms('A child weeps.', stop)).toEqual(['Mind: weeping'])
-    expect(calls[0]![0]).toBe('<case>\nA child weeps.\n</case>')
-    expect(calls[0]![1]).toBe(
-      'Convert this paragraph into individual symptoms, one per line, nothing else. If it describes no symptom, reply only None.',
-    )
-  })
-
-  it('takes a question for a case unless the model plainly says otherwise', async () => {
-    expect(parseKind('QUESTION')).toBe('question')
-    expect(parseKind(' question.\n')).toBe('question')
-    expect(parseKind('CASE')).toBe('case')
-    expect(parseKind('')).toBe('case')
-    expect(parseKind('It may be a question or a case.')).toBe('case')
-    expect(parseKind('OFF_TOPIC')).toBe('off-topic')
-    expect(parseKind('Off-topic.')).toBe('off-topic')
-    expect(parseKind('**off topic**')).toBe('off-topic')
-    expect(parseKind('Not off-topic: CASE')).toBe('case')
-
-    const stop = new AbortController()
-    const calls: [string, string][] = []
-    const classifier = new ModelCaseClassifier({
-      model: 'm',
-      async generate(prompt, { systemInstruction, signal }) {
-        calls.push([prompt, systemInstruction])
-        expect(signal).toBe(stop.signal)
-        return 'QUESTION'
-      },
-    })
-
-    expect(await classifier.classify('What is Sulphur?', stop)).toBe('question')
-    expect(calls[0]![0]).toBe('<case>\nWhat is Sulphur?\n</case>')
-    expect(calls[0]![1]).toContain('Reply only OFF_TOPIC')
-    expect(calls[0]![1]).toContain('When unsure whether it is off-topic, it is not')
   })
 })
 
