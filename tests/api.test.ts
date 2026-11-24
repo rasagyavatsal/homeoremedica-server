@@ -15,6 +15,7 @@ import type {
   CompactResponse,
   QuestionKind,
 } from '../src/contracts.ts'
+import { MAX_SYMPTOMS } from '../src/contracts.ts'
 import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
 
 const BOOK: BookSummary = { bookId: 'kent_lectures', title: "Kent's Lectures", author: 'Kent' }
@@ -223,7 +224,7 @@ it('takes the symptoms a user confirmed with a question', async () => {
   expect(service.requests[0]?.symptoms).toEqual(['Mind: weeping', 'Stomach: thirstless'])
 
   expect((await post({ message: 'A weepy woman.', symptoms: [' '] })).status).toBe(422)
-  expect((await post({ message: 'A weepy woman.', symptoms: Array.from({ length: 16 }, () => 'Mind: weeping') })).status).toBe(422)
+  expect((await post({ message: 'A weepy woman.', symptoms: Array.from({ length: MAX_SYMPTOMS + 1 }, () => 'Mind: weeping') })).status).toBe(422)
   expect((await post({ message: 'A weepy woman.', symptoms: ['x'.repeat(201)] })).status).toBe(422)
 })
 

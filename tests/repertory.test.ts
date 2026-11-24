@@ -193,7 +193,7 @@ describe('parseSymptoms', () => {
 
   it('reads None as no symptoms and keeps at most the limit', () => {
     expect(parseSymptoms('None.')).toEqual([])
-    expect(parseSymptoms(Array.from({ length: 20 }, (_, index) => `Head: pain ${index}`).join('\n'))).toHaveLength(MAX_SYMPTOMS)
+    expect(parseSymptoms(Array.from({ length: MAX_SYMPTOMS + 5 }, (_, index) => `Head: pain ${index}`).join('\n'))).toHaveLength(MAX_SYMPTOMS)
   })
 
   it('keeps a symptom within the length a question may send back', () => {
