@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import type { QuestionKind } from '../src/contracts.ts'
-import { DecisionCaseClassifier, DecisionOpposites, KIND_CRITERIA, MAX_DECISION_QUESTIONS } from '../src/decisions.ts'
+import {
+  DecisionCaseClassifier,
+  DecisionOpposites,
+  FALLBACK_DECISION_MODEL,
+  KIND_CRITERIA,
+  MAX_DECISION_QUESTIONS,
+} from '../src/decisions.ts'
 import { ProviderError } from '../src/errors.ts'
 import type { Fetch } from '../src/http.ts'
 import { fakeFetch, json } from './fakes.ts'
@@ -44,6 +50,28 @@ describe('decision opposites', () => {
       2,
     ])
     expect(opposite.slice(-3)).toEqual([false, false, true])
+  })
+
+  it('asks d1.2 when d1.2-ultra is at capacity', async () => {
+    const atCapacity = new Response('model at capacity', { status: 429 })
+    const fetch = fakeFetch(atCapacity, answers(0.9))
+
+    const opposite = await new DecisionOpposites({ apiKey: 'key', fetch }).opposites([{ symptom: 'Thirstless', rubric: 'Stomach: thirst' }])
+
+    expect(opposite).toEqual([true])
+    expect(fetch.calls.map((call) => (call.body as { model: string }).model)).toEqual(['liquid/d1.2-ultra', FALLBACK_DECISION_MODEL])
+    expect(fetch.calls[1]?.body).toMatchObject({ questions: (fetch.calls[0]?.body as { questions: object }).questions })
+  })
+
+  it('fails when d1.2 is at capacity too, and only asks d1.2 for a 429', async () => {
+    const twice = fakeFetch(new Response('', { status: 429 }), new Response('provider secret', { status: 429 }))
+    const once = fakeFetch(new Response('provider secret', { status: 503 }))
+    const pair = [{ symptom: 'Thirstless', rubric: 'Stomach: thirst' }]
+
+    await expect(new DecisionOpposites({ apiKey: 'key', fetch: twice }).opposites(pair)).rejects.toThrow(/status 429/)
+    await expect(new DecisionOpposites({ apiKey: 'key', fetch: once }).opposites(pair)).rejects.toThrow(/status 503/)
+    expect(twice.calls).toHaveLength(2)
+    expect(once.calls).toHaveLength(1)
   })
 
   it.each([

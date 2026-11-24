@@ -11,6 +11,11 @@ import type { CaseClassifier } from './repertory.ts'
  * rightly, at under a third of the cost.
  */
 export const DECISION_MODEL = 'liquid/d1.2-ultra'
+/**
+ * Asked when d1.2-ultra is at capacity, which it often is. Liquid's d1.2 sorted the same 56 test
+ * questions rightly and removed fewer rubrics, all rightly, at half the cost.
+ */
+export const FALLBACK_DECISION_MODEL = 'liquid/d1.2'
 /** A rubric is the opposite of its symptom from this probability. */
 export const OPPOSITE_CUTOFF = 0.7
 /** d1.2-ultra answers at most 128 questions a request. */
@@ -64,22 +69,28 @@ class Decisions {
     this.#timeoutMs = timeoutMs
   }
 
-  /** Each question's answer, in the order asked. */
+  /** Each question's answer, in the order asked, from DECISION_MODEL or, when it is at capacity, FALLBACK_DECISION_MODEL. */
   async answer(state: string, questions: readonly object[], signal?: AbortSignal): Promise<Record<string, unknown>[]> {
-    const response = await send(
-      this.#fetch,
-      this.#url,
-      {
-        method: 'POST',
-        headers: this.#headers,
-        body: JSON.stringify({
-          model: DECISION_MODEL,
-          state,
-          questions: Object.fromEntries(questions.map((question, index) => [`q${index}`, question])),
-        }),
-      },
-      { label: LABEL, timeoutMs: this.#timeoutMs, signal },
-    )
+    const ask = (model: string) =>
+      send(
+        this.#fetch,
+        this.#url,
+        {
+          method: 'POST',
+          headers: this.#headers,
+          body: JSON.stringify({
+            model,
+            state,
+            questions: Object.fromEntries(questions.map((question, index) => [`q${index}`, question])),
+          }),
+        },
+        { label: LABEL, timeoutMs: this.#timeoutMs, signal },
+      )
+    let response = await ask(DECISION_MODEL)
+    if (response.status === 429) {
+      await response.body?.cancel()
+      response = await ask(FALLBACK_DECISION_MODEL)
+    }
     if (!response.ok) throw new ProviderError(`${LABEL} request failed with status ${response.status}`)
     const parsed = await readJson(response, LABEL)
     const answers = isRecord(parsed) ? parsed.answers : undefined
