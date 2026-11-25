@@ -94,16 +94,12 @@ export async function buildService(settings: Settings): Promise<ChatService> {
   const corpus = loadCorpus(settings)
   await corpus.verify()
   // Every book is searched while Kent's and Boericke's Repertories rank the remedies for the case's
-  // symptoms, and Clarke's Clinical sections those for the diseases it names; each of the three is
-  // a section of the answer of its own.
-  const [repertory, clinical] = await Promise.all([
-    loadRepertory(settings, embedder, {
-      collections: [REPERTORY_COLLECTION, BOERICKE_COLLECTION],
-      opposites: new DecisionOpposites({ apiKey: settings.openrouterApiKey }),
-    }),
-    loadClinical(settings),
-  ])
-  return new ChatService({ retriever: new ProductionRetriever(corpus, embedder, { repertory, clinical }), generator })
+  // symptoms, each a section of the answer of its own. Clarke's clinical ranking is left out for now.
+  const repertory = await loadRepertory(settings, embedder, {
+    collections: [REPERTORY_COLLECTION, BOERICKE_COLLECTION],
+    opposites: new DecisionOpposites({ apiKey: settings.openrouterApiKey }),
+  })
+  return new ChatService({ retriever: new ProductionRetriever(corpus, embedder, { repertory }), generator })
 }
 
 /**
