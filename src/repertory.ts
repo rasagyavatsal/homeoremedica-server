@@ -33,8 +33,6 @@ export const CANDIDATE_RUBRICS = 5
 export { MAX_SYMPTOMS }
 /** A ranking that this many remedies lead together, at a low score, does not tell them apart. */
 export const INDECISIVE_TIES = 5
-/** The extraction model reasons first, and its reasoning counts against this. */
-export const EXTRACTION_MAX_OUTPUT_TOKENS = 16_000
 /** How many of a ranking's remedies an answer names, unless a few more tie with the last of them. */
 export const LEADING_REMEDIES = 3
 /** How many remedies an answer names at most, when those past LEADING_REMEDIES tie with the last it names. */
@@ -322,14 +320,6 @@ function rubricSource(rubric: Rubric, leaders: readonly string[]): RetrievedSour
     text: `Remedies and their grades: ${listed.join(', ')}${more ? `, and ${more} more` : ''}`,
     score: 0,
   }
-}
-
-/** A reply's lines without their list markers or emphasis; headings, blank lines and a bare `None` are dropped. */
-export function replyLines(reply: string): string[] {
-  return reply
-    .split('\n')
-    .map((line) => line.replace(/^[\s*\-•#]*(\d+[.)])?\s*/, '').replace(/\*\*|__/g, '').trim())
-    .filter((line) => line && !line.endsWith(':') && !/^none\W*$/i.test(line))
 }
 
 /** Each symptom's nearest rubrics in every one of several repertories, one repertory after another. */

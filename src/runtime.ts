@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { parseEnv } from 'node:util'
 
 import { type Accounts, firebaseAccounts } from './accounts.ts'
-import { Clinical, ClinicalTerms, type DiseaseExtractor, loadClinicalTerms, ModelDiseaseExtractor } from './clinical.ts'
 import { DecisionCaseClassifier, DecisionOpposites, DecisionSymptomSplitter, type OppositeCheck } from './decisions.ts'
 import { ConfigurationError } from './errors.ts'
 import { ZaiChatClient } from './generation.ts'
@@ -16,7 +15,6 @@ import {
   BOERICKE_COLLECTION,
   type CaseClassifier,
   CombinedRubrics,
-  EXTRACTION_MAX_OUTPUT_TOKENS,
   QdrantRubrics,
   REPERTORY_COLLECTION,
   Repertory,
@@ -94,7 +92,7 @@ export async function buildService(settings: Settings): Promise<ChatService> {
   const corpus = loadCorpus(settings)
   await corpus.verify()
   // Every book is searched while Kent's and Boericke's Repertories rank the remedies for the case's
-  // symptoms, each a section of the answer of its own. Clarke's clinical ranking is left out for now.
+  // symptoms, each a section of the answer of its own.
   const repertory = await loadRepertory(settings, embedder, {
     collections: [REPERTORY_COLLECTION, BOERICKE_COLLECTION],
     opposites: new DecisionOpposites({ apiKey: settings.openrouterApiKey }),
@@ -142,33 +140,6 @@ export function caseClassifier(settings: Settings): CaseClassifier {
 /** The decision model splits a case into its symptoms, in the user's own words. */
 export function symptomExtractor(settings: Settings): SymptomExtractor {
   return new DecisionSymptomSplitter({ apiKey: settings.openrouterApiKey })
-}
-
-/** Clarke's clinical terms from Qdrant, matched to the diseases the answer model names. */
-export async function loadClinical(
-  settings: Settings,
-  { extractor = diseaseExtractor(settings) }: { extractor?: DiseaseExtractor } = {},
-): Promise<Clinical> {
-  const { qdrantUrl: url, qdrantApiKey: apiKey } = settings
-  if (!url) {
-    throw new ConfigurationError('a Qdrant URL is required; set QDRANT_URL in the environment or .env')
-  }
-  return new Clinical({ extractor, terms: new ClinicalTerms(await loadClinicalTerms({ url, apiKey })) })
-}
-
-export function diseaseExtractor(settings: Settings): DiseaseExtractor {
-  return new ModelDiseaseExtractor(extractionClient(settings))
-}
-
-/** The answer model as disease extraction asks it: reasoning as much as it can, and as steady as it goes. */
-function extractionClient(settings: Settings): ZaiChatClient {
-  return new ZaiChatClient({
-    apiKey: settings.zaiApiKey,
-    model: settings.model,
-    maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
-    temperature: 0,
-    reasoningEffort: 'max',
-  })
 }
 
 export function loadCorpus(settings: Settings): QdrantCorpus {

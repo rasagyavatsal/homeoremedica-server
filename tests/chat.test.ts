@@ -24,7 +24,6 @@ class StubRetriever implements Retriever {
     if (this.failure) throw this.failure
     return {
       repertories: [],
-      clinical: [],
       sources: [
         {
         chunkId: 'chk_1',
@@ -121,7 +120,6 @@ it('gives the model the rankings with the rubrics they point to, and cites the r
         ],
       },
     ],
-    clinical: [{ remedyName: 'Colocynthis', matched: [{ text: 'sciatica' }] }],
   })
   const generator = new StubGenerator()
 
@@ -129,8 +127,7 @@ it('gives the model the rankings with the rubrics they point to, and cites the r
 
   expect(generator.generationPrompt).toContain(
     '<repertory_ranking book="Kent, Repertory of the Homoeopathic Materia Medica">\n' +
-      '1. Nux vomica: Mind: irritable [2]; Sleep: waking at 3 a.m.\n</repertory_ranking>\n' +
-      '<clinical_ranking>\n1. Colocynthis: sciatica\n</clinical_ranking>\n',
+      '1. Nux vomica: Mind: irritable [2]; Sleep: waking at 3 a.m.\n</repertory_ranking>\n',
   )
   expect(generator.generationPrompt).toContain(
     '[2] Kent, Repertory of the Homoeopathic Materia Medica — Mind: irritability\nRemedies and their grades: Nux vomica (3)',
@@ -219,7 +216,7 @@ it('rejects oversized citation text before generating an answer', async () => {
 
 it('answers without the model when retrieval finds no sources', async () => {
   const retriever = new StubRetriever()
-  retriever.retrieve = async () => ({ sources: [], repertories: [], clinical: [] })
+  retriever.retrieve = async () => ({ sources: [], repertories: [] })
   const generator = new StubGenerator()
 
   const streamed: string[] = []

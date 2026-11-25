@@ -380,7 +380,6 @@ describe('production retriever with a repertory', () => {
       },
       { bookTitle: 'Boericke, Repertory', remedies: [{ remedyName: 'Ignatia', matched: [{ text: 'Mind: weeps easily', source: 3 }] }] },
     ])
-    expect(retrieval.clinical).toEqual([])
   })
 
   it('leaves out a ranking that many remedies lead together at a low score', async () => {
@@ -410,17 +409,14 @@ describe('production retriever with a repertory', () => {
   it('searches nothing for an off-topic question', async () => {
     const { corpus, calls } = searching()
     const repertorise = vi.fn()
-    const rank = vi.fn()
 
     const retrieval = await new ProductionRetriever(corpus, embedder, {
       repertory: { kind: async () => 'off-topic', repertorise },
-      clinical: { rank },
     }).retrieve(request('What is the capital of France?'), { limit: 8 })
 
-    expect(retrieval).toEqual({ sources: [], repertories: [], clinical: [] })
+    expect(retrieval).toEqual({ sources: [], repertories: [] })
     expect(calls).toEqual([])
     expect(repertorise).not.toHaveBeenCalled()
-    expect(rank).not.toHaveBeenCalled()
   })
 
   it('sorts and ranks by the questions the search uses', async () => {
