@@ -1,10 +1,10 @@
-/** Decisions from a decision model through OpenRouter: a question's kind, a case's symptoms and the rubrics that oppose them. */
+/** Decisions from a decision model through OpenRouter: a question's kind and the rubrics that oppose a case's symptoms. */
 
-import { type Cancellable, MAX_SYMPTOM_CHARS, MAX_SYMPTOMS, type QuestionKind } from './contracts.ts'
+import { type Cancellable, type QuestionKind } from './contracts.ts'
 import { ConfigurationError, ProviderError } from './errors.ts'
 import { DEFAULT_OPENROUTER_BASE_URL } from './embeddings.ts'
 import { type Fetch, isRecord, readJson, send } from './http.ts'
-import type { CaseClassifier, SymptomExtractor } from './repertory.ts'
+import type { CaseClassifier } from './repertory.ts'
 
 /**
  * Liquid's d1.2-ultra removed fewer rubrics than Baseten's bison-1 on 19 cured cases, more of them
@@ -158,80 +158,6 @@ export class DecisionCaseClassifier implements CaseClassifier {
       return 'case'
     }
   }
-}
-
-/** A new symptom starts at a comma or semicolon from this probability. */
-export const NEW_SYMPTOM_CUTOFF = 0.5
-
-/**
- * Splits a case into its symptoms in the user's own words, so they can be searched without being
- * reworded: the case is cut at every full stop, comma and semicolon, and the decision model says
- * at each comma and semicolon whether a new symptom starts there. When the decision model fails,
- * the case is split at every comma.
- */
-export class DecisionSymptomSplitter implements SymptomExtractor {
-  readonly #decisions: Decisions
-
-  constructor(options: DecisionOptions) {
-    this.#decisions = new Decisions(options)
-  }
-
-  async extractSymptoms(text: string, { signal }: Cancellable = {}): Promise<string[]> {
-    const sentences = casePieces(text)
-    return joinedPieces(sentences, await this.#starts(text, sentences, signal))
-  }
-
-  /** For each piece after a sentence's first, whether a new symptom starts there. */
-  async #starts(text: string, sentences: readonly (readonly string[])[], signal?: AbortSignal): Promise<boolean[]> {
-    const questions = sentences.flatMap((pieces) =>
-      pieces.slice(1).map((piece) => ({
-        type: 'noul',
-        instructions: `Sentence: ${JSON.stringify(pieces.join(' '))}. Does ${JSON.stringify(piece)} begin a new symptom, rather than continue describing the one before it?`,
-      })),
-    )
-    try {
-      const answers = await this.#decisions.answer(`Case notes a homoeopath wrote about a patient: ${JSON.stringify(text)}`, questions, signal)
-      return answers.map((answer) => probability(answer) >= NEW_SYMPTOM_CUTOFF)
-    } catch (error) {
-      if (signal?.aborted) throw error
-      console.error('Splitting the case with the decision model failed; splitting it at every comma', error)
-      return questions.map(() => true)
-    }
-  }
-}
-
-/** Each sentence of a case cut after every comma and semicolon; lines a sentence wraps across are joined. */
-export function casePieces(text: string): string[][] {
-  return text
-    .replace(/\s*\n\s*/g, ' ')
-    .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.split(/(?<=[,;])\s+/).map((piece) => piece.trim()).filter(Boolean))
-    .filter((pieces) => pieces.length)
-}
-
-/**
- * Each sentence's pieces joined where `starts` says no new symptom starts, without the punctuation
- * that ended them, each once and no longer than MAX_SYMPTOM_CHARS.
- */
-export function joinedPieces(sentences: readonly (readonly string[])[], starts: readonly boolean[]): string[] {
-  const symptoms = new Map<string, string>()
-  const add = (piece: string) => {
-    const symptom = piece.replace(/[,;.]+$/, '').slice(0, MAX_SYMPTOM_CHARS).trimEnd()
-    const key = symptom.toLowerCase()
-    if (symptom && !symptoms.has(key)) symptoms.set(key, symptom)
-  }
-  let at = 0
-  for (const [first, ...rest] of sentences) {
-    let current = first ?? ''
-    for (const piece of rest) {
-      if (starts[at++]) {
-        add(current)
-        current = piece
-      } else current += ` ${piece}`
-    }
-    add(current)
-  }
-  return [...symptoms.values()].slice(0, MAX_SYMPTOMS)
 }
 
 function probability({ noul }: Record<string, unknown>): number {

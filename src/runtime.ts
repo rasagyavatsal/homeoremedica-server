@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { parseEnv } from 'node:util'
 
 import { type Accounts, firebaseAccounts } from './accounts.ts'
-import { DecisionCaseClassifier, DecisionOpposites, DecisionSymptomSplitter, type OppositeCheck } from './decisions.ts'
+import { DecisionCaseClassifier, DecisionOpposites, type OppositeCheck } from './decisions.ts'
 import { ConfigurationError } from './errors.ts'
 import { OpenRouterChatClient } from './generation.ts'
 import { ChatService } from './service.ts'
@@ -18,9 +18,9 @@ import {
   QdrantRubrics,
   REPERTORY_COLLECTION,
   Repertory,
-  type SymptomExtractor,
 } from './repertory.ts'
 import { ProductionRetriever } from './retrieval.ts'
+import { OpenRouterRewriter } from './rewrite.ts'
 
 export const DEFAULT_MODEL = 'openai/gpt-6-luna'
 export const MAX_OUTPUT_TOKENS = 8_192
@@ -95,11 +95,12 @@ export async function buildService(settings: Settings): Promise<ChatService> {
     collections: [REPERTORY_COLLECTION, BOERICKE_COLLECTION],
     opposites: new DecisionOpposites({ apiKey: settings.openrouterApiKey }),
   })
-  return new ChatService({ retriever: new ProductionRetriever(corpus, embedder, { repertory }), generator })
+  const rewriter = new OpenRouterRewriter({ apiKey: settings.openrouterApiKey })
+  return new ChatService({ retriever: new ProductionRetriever(corpus, embedder, { repertory, rewriter }), generator })
 }
 
 /**
- * Repertorisation with the decision model, checked to have its Qdrant collections. With several
+ * Repertorisation, sorted by the decision model and checked to have its Qdrant collections. With several
  * collections, each symptom is matched to its nearest rubrics in each; with `opposites`, less those
  * that state its opposite.
  */
@@ -109,12 +110,10 @@ export async function loadRepertory(
   {
     collections = [REPERTORY_COLLECTION],
     classifier = caseClassifier(settings),
-    extractor = symptomExtractor(settings),
     opposites,
   }: {
     collections?: readonly string[]
     classifier?: CaseClassifier
-    extractor?: SymptomExtractor
     opposites?: OppositeCheck | undefined
   } = {},
 ): Promise<Repertory> {
@@ -127,17 +126,12 @@ export async function loadRepertory(
     if (!(await search.exists())) throw new CorpusError(`the Qdrant collection ${collections[index]} does not exist`)
   }
   const rubrics = searches.length === 1 ? searches[0]! : new CombinedRubrics(searches)
-  return new Repertory({ classifier, extractor, embedder, rubrics, opposites })
+  return new Repertory({ classifier, embedder, rubrics, opposites })
 }
 
 /** The decision model decides whether a question is a case. */
 export function caseClassifier(settings: Settings): CaseClassifier {
   return new DecisionCaseClassifier({ apiKey: settings.openrouterApiKey })
-}
-
-/** The decision model splits a case into its symptoms, in the user's own words. */
-export function symptomExtractor(settings: Settings): SymptomExtractor {
-  return new DecisionSymptomSplitter({ apiKey: settings.openrouterApiKey })
 }
 
 export function loadCorpus(settings: Settings): QdrantCorpus {

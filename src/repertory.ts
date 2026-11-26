@@ -2,8 +2,8 @@
  * Repertorisation of a described case against Kent's Repertory, and optionally Boericke's, each
  * ranking remedies on its own.
  *
- * The case is split into symptoms in the user's own words by a decision model, each symptom is
- * matched to its nearest rubrics by voyage-4 embedding, less those a decision model finds state its opposite, and
+ * Each of the case's symptoms, in the user's own words, is matched to its nearest rubrics by voyage-4
+ * embedding, less those a decision model finds state its opposite, and
  * remedies are ranked the way a homoeopath works a repertory:
  * by how many of the case's symptoms they cover, then by their grades. A ranking that many remedies
  * lead together at a low score is left out of the answer. The rubrics are the
@@ -83,12 +83,8 @@ export interface Repertorisation {
 export interface Repertoriser {
   /** Whether the text describes a patient, asks about anything else, or is off-topic. */
   kind(text: string, options?: Cancellable): Promise<QuestionKind>
-  /** Ranks remedies for the symptoms of the case the text describes. */
-  repertorise(text: string): Promise<Repertorisation>
-}
-
-export interface SymptomExtractor {
-  extractSymptoms(text: string, options?: Cancellable): Promise<string[]>
+  /** Ranks remedies for a case's symptoms. */
+  repertorise(symptoms: readonly string[]): Promise<Repertorisation>
 }
 
 export interface CaseClassifier {
@@ -106,26 +102,22 @@ export interface RubricSearch {
 
 export class Repertory implements Repertoriser {
   readonly #classifier: CaseClassifier
-  readonly #extractor: SymptomExtractor
   readonly #embedder: QueriesEmbedder
   readonly #rubrics: RubricSearch
   readonly #opposites: OppositeCheck | undefined
 
   constructor({
     classifier,
-    extractor,
     embedder,
     rubrics,
     opposites,
   }: {
     classifier: CaseClassifier
-    extractor: SymptomExtractor
     embedder: QueriesEmbedder
     rubrics: RubricSearch
     opposites?: OppositeCheck | undefined
   }) {
     this.#classifier = classifier
-    this.#extractor = extractor
     this.#embedder = embedder
     this.#rubrics = rubrics
     this.#opposites = opposites
@@ -135,12 +127,7 @@ export class Repertory implements Repertoriser {
     return this.#classifier.classify(text, options)
   }
 
-  symptoms(text: string, options?: Cancellable): Promise<string[]> {
-    return this.#extractor.extractSymptoms(text, options)
-  }
-
-  async repertorise(text: string): Promise<Repertorisation> {
-    const symptoms = await this.symptoms(text)
+  async repertorise(symptoms: readonly string[]): Promise<Repertorisation> {
     if (!symptoms.length) return { symptoms: [], remedies: [] }
     const embeddings = await this.#embedder.embedQueries(symptoms)
     const found = await this.#rubrics.search(embeddings, {

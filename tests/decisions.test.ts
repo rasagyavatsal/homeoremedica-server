@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_SYMPTOM_CHARS } from '../src/contracts.ts'
 import {
   DecisionCaseClassifier,
   DecisionOpposites,
-  DecisionSymptomSplitter,
   FALLBACK_DECISION_MODEL,
   KIND_CRITERIA,
   MAX_DECISION_QUESTIONS,
-  casePieces,
-  joinedPieces,
 } from '../src/decisions.ts'
 import { ProviderError } from '../src/errors.ts'
 import type { Fetch } from '../src/http.ts'
@@ -135,59 +131,5 @@ describe('decision case classifier', () => {
 
   it('requires a key', () => {
     expect(() => new DecisionCaseClassifier({ apiKey: undefined })).toThrow(/OPENROUTER_API_KEY/)
-  })
-})
-
-describe('decision symptom splitter', () => {
-  const CASE = 'Stools green,\nsour and offensive. Worse at night; better lying.'
-
-  /** Answers the split request, keeping each body sent. */
-  const splitting = (split: Response) => {
-    const bodies: { state: string; questions: Record<string, { instructions: string }> }[] = []
-    const fetch: Fetch = async (_url, init) => {
-      bodies.push(JSON.parse(String(init?.body)))
-      return split
-    }
-    return { fetch, bodies }
-  }
-
-  it('cuts a case at every full stop, comma and semicolon, joining the lines a sentence wraps across', () => {
-    expect(casePieces(CASE)).toEqual([
-      ['Stools green,', 'sour and offensive.'],
-      ['Worse at night;', 'better lying.'],
-    ])
-  })
-
-  it('joins the pieces where the decision model finds no new symptom starts', async () => {
-    const { fetch, bodies } = splitting(answers(0.1, 0.9))
-
-    const symptoms = await new DecisionSymptomSplitter({ apiKey: 'key', fetch }).extractSymptoms(CASE)
-
-    expect(symptoms).toEqual(['Stools green, sour and offensive', 'Worse at night', 'better lying'])
-    const [split] = bodies
-    expect(bodies).toHaveLength(1)
-    expect(split?.state).toBe(`Case notes a homoeopath wrote about a patient: ${JSON.stringify(CASE)}`)
-    expect(split?.questions.q0?.instructions).toBe(
-      'Sentence: "Stools green, sour and offensive.". Does "sour and offensive." begin a new symptom, rather than continue describing the one before it?',
-    )
-  })
-
-  it('splits the case at every comma when the decision model fails', async () => {
-    const { fetch } = splitting(new Response('provider secret', { status: 500 }))
-
-    expect(await new DecisionSymptomSplitter({ apiKey: 'key', fetch }).extractSymptoms(CASE)).toEqual([
-      'Stools green',
-      'sour and offensive',
-      'Worse at night',
-      'better lying',
-    ])
-  })
-
-  it('keeps each symptom once and within the length a symptom may have', () => {
-    const long = `Head: ${'pain, '.repeat(60)}`.trim()
-
-    const symptoms = joinedPieces([[long], ['Thirstless.'], ['thirstless']], [])
-
-    expect(symptoms).toEqual([long.slice(0, MAX_SYMPTOM_CHARS).trimEnd(), 'Thirstless'])
   })
 })

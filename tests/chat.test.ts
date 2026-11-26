@@ -386,35 +386,7 @@ it('drops confirmed symptoms and diseases', () => {
   })
 })
 
-it('production retriever searches on recent questions only', async () => {
-  let embedded: string | null = null
-  const corpus: SearchableRelease = { search: async () => [] }
-  const embedder = {
-    async embedQuery(text: string) {
-      embedded = text
-      return [1.0, 0.0]
-    },
-  }
-
-  await new ProductionRetriever(corpus, embedder).retrieve(
-    request({
-      message: 'And its mental symptoms?',
-      history: [
-        { role: 'user', content: 'Tell me about Nux vomica.' },
-        { role: 'assistant', content: 'Nux vomica suits irritable patients [1].' },
-        { role: 'user', content: 'What about Sepia?' },
-        { role: 'assistant', content: 'Sepia is indifferent to loved ones [2].' },
-        { role: 'user', content: 'Compare it with Pulsatilla.' },
-        { role: 'assistant', content: 'Pulsatilla is mild and weepy [3].' },
-      ],
-    }),
-    { limit: 8 },
-  )
-
-  expect(embedded).toBe('What about Sepia?\nCompare it with Pulsatilla.\nAnd its mental symptoms?')
-})
-
-it('production retriever embeds the conversation', async () => {
+it('production retriever searches a question by its rewrite', async () => {
   let searchCall: unknown[] | null = null
   const corpus: SearchableRelease = {
     async search(query, embedding, { limit }) {
@@ -429,8 +401,9 @@ it('production retriever embeds the conversation', async () => {
       return [1.0, 0.0]
     },
   }
+  const rewriter = { rewrite: async () => ({ query: 'Nux vomica irritability', caseMessages: ['What about irritability?'], symptoms: [] }) }
 
-  await new ProductionRetriever(corpus, embedder).retrieve(
+  await new ProductionRetriever(corpus, embedder, { rewriter }).retrieve(
     request({
       message: 'What about irritability?',
       history: [{ role: 'user', content: 'Tell me about Nux vomica.' }],
@@ -438,9 +411,34 @@ it('production retriever embeds the conversation', async () => {
     { limit: 8 },
   )
 
-  const query = 'Tell me about Nux vomica.\nWhat about irritability?'
-  expect(embedded).toBe(query)
-  expect(searchCall).toEqual([query, [1.0, 0.0], 8])
+  expect(embedded).toBe('Nux vomica irritability')
+  expect(searchCall).toEqual(['Nux vomica irritability', [1.0, 0.0], 8])
+})
+
+it('production retriever searches the message as it was sent when the rewrite fails', async () => {
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+  let embedded: string | null = null
+  const corpus: SearchableRelease = { search: async () => [] }
+  const embedder = {
+    async embedQuery(text: string) {
+      embedded = text
+      return [1.0, 0.0]
+    },
+  }
+  const rewriter = {
+    rewrite: async (): Promise<never> => {
+      throw new ProviderError('OpenRouter rewrite request timed out')
+    },
+  }
+
+  await new ProductionRetriever(corpus, embedder, { rewriter }).retrieve(
+    request({ message: 'And its mental symptoms?', history: [{ role: 'user', content: 'Tell me about Nux vomica.' }] }),
+    { limit: 8 },
+  )
+
+  expect(embedded).toBe('And its mental symptoms?')
+  expect(logged).toHaveBeenCalledOnce()
+  logged.mockRestore()
 })
 
 it('production retriever leaves an embedding failure for the caller to classify', async () => {

@@ -10,8 +10,7 @@ import {
   type Retriever,
 } from './contracts.ts'
 import { REPERTORIES, type Repertorisation, type Repertoriser, decisive, inRepertory, leadingRemedies } from './repertory.ts'
-
-const PREVIOUS_QUESTIONS = 2
+import { type MessageRewriter, type Rewrite, splitCase, unrewritten } from './rewrite.ts'
 
 export interface QueryEmbedder {
   embedQuery(text: string): Promise<readonly number[]>
@@ -29,37 +28,46 @@ export class ProductionRetriever implements Retriever {
   readonly #corpus: SearchableRelease
   readonly #embedder: QueryEmbedder
   readonly #repertory: Repertoriser | undefined
+  readonly #rewriter: MessageRewriter | undefined
 
   /**
-   * Every book is searched for passages of its own. With a repertory, the question is sorted first:
-   * an off-topic one is not searched for, and for one that describes a patient remedies are ranked
-   * by its symptoms too, each repertory apart. The rankings do not reorder
-   * the passages: an answer gives each its own section, and weighing them into the search named
-   * their polychrests a second time in place of the remedies the books found. A ranking that many
-   * remedies lead together at a low score is left out. The leading remedies of each ranking are
+   * Every book is searched for passages of its own. With a repertory, the question is sorted by every
+   * question of the chat while the rewriter reads it with the conversation: an off-topic one is not
+   * searched for, one that describes no patient is searched by its rewrite as a standalone query, and
+   * for one that describes a patient the books are searched by the user's own messages about that
+   * patient, and remedies are ranked by its symptoms too, each repertory apart. The rankings do not
+   * reorder the passages: an answer gives each its own section, and weighing them into the search
+   * named their polychrests a second time in place of the remedies the books found. A ranking that
+   * many remedies lead together at a low score is left out. The leading remedies of each ranking are
    * returned with the passages, and the rubrics behind the repertories' as further sources.
    */
   constructor(
     corpus: SearchableRelease,
     embedder: QueryEmbedder,
-    { repertory }: { repertory?: Repertoriser | undefined } = {},
+    { repertory, rewriter }: { repertory?: Repertoriser | undefined; rewriter?: MessageRewriter | undefined } = {},
   ) {
     this.#corpus = corpus
     this.#embedder = embedder
     this.#repertory = repertory
+    this.#rewriter = rewriter
   }
 
   async retrieve(request: ChatRequest, { limit }: { limit: number }): Promise<Retrieval> {
-    // Earlier questions resolve follow-ups such as "what about its mental symptoms?". Answers are
-    // left out: they are long enough to drown the question in both rankings.
-    const query = searchQuery(request)
-    // An off-topic question has nothing in the books, and only a case has symptoms to search the
-    // repertories by.
-    const kind: QuestionKind = this.#repertory ? await this.#repertory.kind(query) : 'question'
-    if (kind === 'off-topic') return { sources: [], repertories: [] }
+    const abandoned = new AbortController()
+    const rewriting = this.#rewrite(request, abandoned.signal)
+    // Answers are left out of the sort: they are long enough to drown the questions.
+    const kind: QuestionKind = this.#repertory ? await this.#repertory.kind(questions(request)) : 'question'
+    if (kind === 'off-topic') {
+      abandoned.abort()
+      return { sources: [], repertories: [] }
+    }
+    const { query, caseMessages, symptoms } = await rewriting
+    // A case is searched in the user's own words, which a rewrite could lose.
+    const caseText = caseMessages.join('\n')
+    const searched = kind === 'case' ? caseText.slice(-MAX_RETRIEVAL_QUERY_CHARS) : query
     const [passages, repertorisation] = await Promise.all([
-      this.#embedder.embedQuery(query).then((embedding) => this.#corpus.search(query, embedding, { limit })),
-      kind === 'case' ? this.#repertorisation(query) : undefined,
+      this.#embedder.embedQuery(searched).then((embedding) => this.#corpus.search(searched, embedding, { limit })),
+      kind === 'case' ? this.#repertorisation(symptoms.length ? symptoms : splitCase(caseText)) : undefined,
     ])
     // Each repertory ranks the remedies on its own, for an answer section of its own.
     const repertories: RepertoryRanking[] = []
@@ -75,11 +83,22 @@ export class ProductionRetriever implements Retriever {
     return { sources: [...passages, ...rubrics], repertories }
   }
 
-  /** The repertorisation of the case the query describes. */
-  async #repertorisation(query: string): Promise<Repertorisation | undefined> {
+  /** The rewrite of the latest message or, when it fails, the message as it was sent. */
+  async #rewrite(request: ChatRequest, signal: AbortSignal): Promise<Rewrite> {
+    if (!this.#rewriter) return unrewritten(request)
+    try {
+      return await this.#rewriter.rewrite(request, { signal })
+    } catch (error) {
+      if (!signal.aborted) console.error('Rewriting the message failed; searching it as it was sent', error)
+      return unrewritten(request)
+    }
+  }
+
+  /** The repertorisation of the case's symptoms. */
+  async #repertorisation(symptoms: readonly string[]): Promise<Repertorisation | undefined> {
     if (!this.#repertory) return undefined
     try {
-      return await this.#repertory.repertorise(query)
+      return await this.#repertory.repertorise(symptoms)
     } catch (error) {
       // The ranking is only a section of the answer; without it the books still answer.
       console.error('Repertorisation failed; searching without it', error)
@@ -88,8 +107,8 @@ export class ProductionRetriever implements Retriever {
   }
 }
 
-/** The question with the ones before it, as the books and the repertories are searched. */
-function searchQuery(request: ChatRequest): string {
-  const questions = request.history.filter((turn) => turn.role === 'user').slice(-PREVIOUS_QUESTIONS)
-  return [...questions.map((turn) => turn.content), request.message].join('\n').slice(-MAX_RETRIEVAL_QUERY_CHARS)
+/** Every question of the chat, oldest first, as the question is sorted. */
+function questions(request: ChatRequest): string {
+  const earlier = request.history.filter((turn) => turn.role === 'user').map((turn) => turn.content)
+  return [...earlier, request.message].join('\n').slice(-MAX_RETRIEVAL_QUERY_CHARS)
 }

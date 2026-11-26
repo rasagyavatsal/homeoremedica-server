@@ -179,7 +179,6 @@ describe('Repertory', () => {
     const searched: unknown[] = []
     const repertory = new Repertory({
       classifier,
-      extractor: { extractSymptoms: async () => ['Mind: weeping', 'Stomach: thirstless'] },
       embedder: { embedQueries: async (texts) => texts.map((_, index) => [index]) },
       rubrics: {
         async search(embeddings, { limit }) {
@@ -189,7 +188,7 @@ describe('Repertory', () => {
       },
     })
 
-    const result = await repertory.repertorise('case')
+    const result = await repertory.repertorise(['Mind: weeping', 'Stomach: thirstless'])
 
     expect(searched).toEqual([[[0], [1]], 3])
     expect(result.symptoms.map((match) => [match.symptom, match.rubrics.map((found) => found.text)])).toEqual([
@@ -205,7 +204,6 @@ describe('Repertory', () => {
     const boericke = { ...rubric('Stomach: thirst, thirstlessness', ['puls', 2]), bookId: 'boericke_repertory' }
     const repertory = new Repertory({
       classifier,
-      extractor: { extractSymptoms: async () => ['Thirstless'] },
       embedder: { embedQueries: async (texts) => texts.map(() => [0]) },
       rubrics: {
         async search(_embeddings, { limit }) {
@@ -222,7 +220,7 @@ describe('Repertory', () => {
       },
     })
 
-    const result = await repertory.repertorise('case')
+    const result = await repertory.repertorise(['Thirstless'])
 
     expect(searched).toEqual([5])
     expect(asked).toHaveLength(5)
@@ -239,7 +237,6 @@ describe('Repertory', () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     const repertory = new Repertory({
       classifier,
-      extractor: { extractSymptoms: async () => ['Thirstless'] },
       embedder: { embedQueries: async (texts) => texts.map(() => [0]) },
       rubrics: {
         search: async () => [['Stomach: thirst', 'Stomach: thirstless', 'Chill: thirstless', 'Throat: dryness'].map((text) => rubric(text, ['puls', 1]))],
@@ -251,23 +248,22 @@ describe('Repertory', () => {
       },
     })
 
-    const result = await repertory.repertorise('case')
+    const result = await repertory.repertorise(['Thirstless'])
 
     expect(result.symptoms[0]?.rubrics.map((found) => found.text)).toEqual(['Stomach: thirst', 'Stomach: thirstless', 'Chill: thirstless'])
     expect(logged).toHaveBeenCalledOnce()
     logged.mockRestore()
   })
 
-  it('searches nothing for a question that describes no patient', async () => {
+  it('searches nothing without symptoms', async () => {
     const embedQueries = vi.fn()
     const repertory = new Repertory({
       classifier,
-      extractor: { extractSymptoms: async () => [] },
       embedder: { embedQueries },
       rubrics: { search: vi.fn() },
     })
 
-    expect(await repertory.repertorise('What is Sulphur?')).toEqual({ symptoms: [], remedies: [] })
+    expect(await repertory.repertorise([])).toEqual({ symptoms: [], remedies: [] })
     expect(embedQueries).not.toHaveBeenCalled()
   })
 })
@@ -419,23 +415,68 @@ describe('production retriever with a repertory', () => {
     expect(repertorise).not.toHaveBeenCalled()
   })
 
-  it('sorts and ranks by the questions the search uses', async () => {
-    const { corpus } = searching()
+  it('sorts by every question of the chat, and searches a case by its messages and symptoms', async () => {
+    const searched: string[] = []
+    const corpus: SearchableRelease = { search: async (query) => (searched.push(query), []) }
     const seen: unknown[] = []
     const repertory: Repertoriser = {
       kind: async (text) => (seen.push(text), 'case'),
-      repertorise: async (text) => (seen.push(text), { symptoms: [], remedies: [] }),
+      repertorise: async (symptoms) => (seen.push(symptoms), { symptoms: [], remedies: [] }),
     }
-    const retriever = new ProductionRetriever(corpus, embedder, { repertory })
+    const rewriter = {
+      rewrite: async () => ({
+        query: 'Rewritten',
+        caseMessages: ['A weepy woman.', 'She is thirstless.'],
+        symptoms: ['weepy', 'thirstless'],
+      }),
+    }
     const asked = ChatRequestSchema.parse({
       message: 'She is thirstless.',
-      history: [{ role: 'user', content: 'A weepy woman.' }, { role: 'assistant', content: 'Pulsatilla.' }],
+      history: [
+        { role: 'user', content: 'A weepy woman.' },
+        { role: 'assistant', content: 'Pulsatilla.' },
+        { role: 'user', content: 'What is Sulphur?' },
+        { role: 'assistant', content: 'A remedy.' },
+      ],
     })
 
-    await retriever.retrieve(asked, { limit: 8 })
+    await new ProductionRetriever(corpus, embedder, { repertory, rewriter }).retrieve(asked, { limit: 8 })
 
-    const query = 'A weepy woman.\nShe is thirstless.'
-    expect(seen).toEqual([query, query])
+    expect(seen).toEqual(['A weepy woman.\nWhat is Sulphur?\nShe is thirstless.', ['weepy', 'thirstless']])
+    expect(searched).toEqual(['A weepy woman.\nShe is thirstless.'])
+  })
+
+  it("splits a case without the model's symptoms at its commas and line breaks", async () => {
+    const { corpus } = searching()
+    const seen: unknown[] = []
+    const repertory: Repertoriser = {
+      kind: async () => 'case',
+      repertorise: async (symptoms) => (seen.push(symptoms), { symptoms: [], remedies: [] }),
+    }
+
+    await new ProductionRetriever(corpus, embedder, { repertory }).retrieve(request('Weeps easily, thirstless\nWorse at night.'), { limit: 8 })
+
+    expect(seen).toEqual([['Weeps easily', 'thirstless', 'Worse at night']])
+  })
+
+  it('stops the rewrite of an off-topic question', async () => {
+    const { corpus } = searching()
+    let stopped: AbortSignal | undefined
+    const rewriter = {
+      rewrite: (_request: ChatRequest, { signal }: { signal?: AbortSignal } = {}) =>
+        new Promise<never>((_resolve, reject) => {
+          stopped = signal
+          signal?.addEventListener('abort', () => reject(signal.reason))
+        }),
+    }
+
+    const retrieval = await new ProductionRetriever(corpus, embedder, {
+      repertory: { kind: async () => 'off-topic', repertorise: vi.fn() },
+      rewriter,
+    }).retrieve(request('Tell me a joke.'), { limit: 8 })
+
+    expect(retrieval).toEqual({ sources: [], repertories: [] })
+    expect(stopped?.aborted).toBe(true)
   })
 
   it('searches the whole corpus when repertorisation fails', async () => {
