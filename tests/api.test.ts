@@ -408,8 +408,8 @@ describe('invalid requests are rejected before chat', () => {
 it.each<[Error, number, string]>([
   [new ProviderTimeoutError('private-secret'), 504, 'The request took too long. Please try again.'],
   [new DOMException('private-secret', 'TimeoutError'), 504, 'The request took too long. Please try again.'],
-  [new ProviderError('private-secret'), 502, 'The chat provider is temporarily unavailable. Please try again shortly.'],
-  [new TokenExhaustionError(), 502, 'Response limit reached. Please try again.'],
+  [new ProviderError('private-secret'), 502, 'HomeoRemedica could not answer just now. Please try again shortly.'],
+  [new TokenExhaustionError(), 502, 'The answer was too long to finish. Try asking about fewer things at once.'],
   [new CorpusError('private-secret'), 500, INTERNAL],
 ])('%s failures have friendly details', async (failure, status, detail) => {
   quiet()
