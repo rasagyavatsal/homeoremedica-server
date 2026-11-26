@@ -199,8 +199,9 @@ it('stops the search when the user stops', async () => {
   const stop = new AbortController()
 
   await new ChatService({ retriever, generator: new StubGenerator() }).chat(request({ message: 'question' }), { signal: stop.signal })
+  stop.abort()
 
-  expect(retriever.signal).toBe(stop.signal)
+  expect(retriever.signal?.aborted).toBe(true)
 })
 
 it.each([new ProviderError('provider secret'), new TokenExhaustionError()])(
@@ -377,17 +378,34 @@ describe('compaction', () => {
     expect(signals[0]?.aborted).toBe(true)
   })
 
-  it('answers from the whole context when condensing fails', async () => {
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const { prompts, service } = answering(new ProviderTimeoutError('provider secret'))
+  it('fails without answering when condensing fails', async () => {
+    const cause = new ProviderTimeoutError('provider secret')
+    const { prompts, service } = answering(cause)
 
-    const response = await service.chat(request({ message: 'And Sepia?', history: long(16) }))
+    await expect(service.chat(request({ message: 'And Sepia?', history: long(16) }))).rejects.toBe(cause)
 
-    expect(response.answer).toBe('Answer [1].')
-    expect(response.compacted).toBeUndefined()
-    expect(prompts[1]).toContain('<user>turn 0</user>')
-    expect(logged).toHaveBeenCalledOnce()
-    logged.mockRestore()
+    expect(prompts).toHaveLength(1)
+  })
+
+  it('stops the search when condensing fails, and fails with the compaction error', async () => {
+    const cause = new ProviderTimeoutError('provider secret')
+    const generator: AnswerGenerator = {
+      model: 'openai/gpt-6-luna',
+      generate: async () => {
+        throw cause
+      },
+    }
+    let stopped: AbortSignal | undefined
+    const retriever: Retriever = {
+      retrieve: (_request, { signal }) =>
+        new Promise<never>((_resolve, reject) => {
+          stopped = signal
+          signal?.addEventListener('abort', () => reject(new ProviderError('search stopped')))
+        }),
+    }
+
+    await expect(new ChatService({ retriever, generator }).chat(request({ message: 'And Sepia?', history: long(16) }))).rejects.toBe(cause)
+    expect(stopped?.aborted).toBe(true)
   })
 })
 

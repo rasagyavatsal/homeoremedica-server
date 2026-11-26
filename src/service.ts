@@ -52,27 +52,30 @@ export class ChatService {
   }
 
   async chat(request: ChatRequest, { onSources, onText, signal }: ChatOptions = {}): Promise<ChatResponse> {
-    // Condense a nearly full chat while the books are searched. A failure answers from the
-    // context as it was, and the earliest turns are dropped instead.
-    // Stops the compaction when the question fails before its summary is used.
+    // Condense a nearly full chat while the books are searched. When either fails, the other stops
+    // and the question fails with the error that came first.
     const abandoned = new AbortController()
     const stopped = signal ? AbortSignal.any([signal, abandoned.signal]) : abandoned.signal
+    let compactionFailure: unknown
     const compacting = shouldCompact(request)
       ? this.compact(request, { signal: stopped }).catch((error: unknown) => {
-          if (!stopped.aborted) console.error('Compacting a chat failed; answering without it', error)
-          return undefined
+          compactionFailure ??= error
+          abandoned.abort()
+          throw error
         })
       : undefined
+    // A compaction left behind by a failed search is stopped, not awaited.
+    compacting?.catch(() => {})
     let retrieval: Retrieval
     try {
-      retrieval = await this.#retriever.retrieve(request, { limit: this.#sourceLimit, signal })
+      retrieval = await this.#retriever.retrieve(request, { limit: this.#sourceLimit, signal: stopped })
       // Reject an unusable corpus before paying for an answer.
       if (retrieval.sources.some((source) => source.text.length > MAX_CITATION_TEXT_CHARS)) {
         throw new RangeError('citation text is too long')
       }
     } catch (error) {
       abandoned.abort()
-      throw error
+      throw compactionFailure ?? error
     }
     const { sources } = retrieval
 
