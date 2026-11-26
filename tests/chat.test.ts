@@ -42,7 +42,7 @@ class StubRetriever implements Retriever {
 }
 
 class StubGenerator implements AnswerGenerator {
-  readonly model = 'glm-5.3-flash'
+  readonly model = 'openai/gpt-6-luna'
   generationPrompt: string | null = null
   signal: AbortSignal | undefined
   failure: unknown = null
@@ -75,7 +75,7 @@ it('grounds a conversation-aware answer in versioned sources', async () => {
   expect(generator.generationPrompt).toContain('untrusted reference data')
   expect(response.answer).toBe('Kent describes irritability and oversensitivity [1].')
   expect(response.corpusVersion).toBe('homeoremedica')
-  expect(response.model).toBe('glm-5.3-flash')
+  expect(response.model).toBe('openai/gpt-6-luna')
   expect(response.sources[0]?.id).toBe('homeoremedica/kent_lectures/chk_1')
 })
 
@@ -265,7 +265,7 @@ describe('compaction', () => {
   function summarizer(summary: string | Error) {
     const calls: { prompt: string; systemInstruction: string }[] = []
     const generator: AnswerGenerator = {
-      model: 'glm-5.3-flash',
+      model: 'openai/gpt-6-luna',
       async generate(prompt, { systemInstruction }) {
         calls.push({ prompt, systemInstruction })
         if (summary instanceof Error) throw summary
@@ -315,7 +315,7 @@ describe('compaction', () => {
     const signals: (AbortSignal | undefined)[] = []
     const retriever = new StubRetriever()
     const generator: AnswerGenerator = {
-      model: 'glm-5.3-flash',
+      model: 'openai/gpt-6-luna',
       async generate(prompt, { systemInstruction, signal }) {
         prompts.push(prompt)
         signals.push(signal)

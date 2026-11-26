@@ -7,7 +7,7 @@ import { parseEnv } from 'node:util'
 import { type Accounts, firebaseAccounts } from './accounts.ts'
 import { DecisionCaseClassifier, DecisionOpposites, DecisionSymptomSplitter, type OppositeCheck } from './decisions.ts'
 import { ConfigurationError } from './errors.ts'
-import { ZaiChatClient } from './generation.ts'
+import { OpenRouterChatClient } from './generation.ts'
 import { ChatService } from './service.ts'
 import { VoyageQueryEmbedder } from './embeddings.ts'
 import { CorpusError, QdrantCorpus } from './qdrant.ts'
@@ -22,7 +22,7 @@ import {
 } from './repertory.ts'
 import { ProductionRetriever } from './retrieval.ts'
 
-export const DEFAULT_MODEL = 'glm-5.3-flash'
+export const DEFAULT_MODEL = 'openai/gpt-6-luna'
 export const MAX_OUTPUT_TOKENS = 8_192
 
 export interface Settings {
@@ -30,7 +30,6 @@ export interface Settings {
   qdrantApiKey: string | undefined
   model: string
   maxOutputTokens: number
-  zaiApiKey: string | undefined
   openrouterApiKey: string | undefined
   /** Accounts are offered only when both Firebase settings are set. */
   firebaseProjectId: string | undefined
@@ -63,7 +62,6 @@ export function loadSettings(
     qdrantApiKey: value('QDRANT_API_KEY'),
     model: value('RAG_MODEL') ?? DEFAULT_MODEL,
     maxOutputTokens: Number(maxOutputTokens),
-    zaiApiKey: value('ZAI_API_KEY'),
     openrouterApiKey: value('OPENROUTER_API_KEY'),
     firebaseProjectId: value('FIREBASE_PROJECT_ID'),
     firebaseApiKey: value('FIREBASE_API_KEY'),
@@ -84,8 +82,8 @@ function readEnvFile(path: string): Record<string, string> {
 
 export async function buildService(settings: Settings): Promise<ChatService> {
   const embedder = new VoyageQueryEmbedder({ apiKey: settings.openrouterApiKey })
-  const generator = new ZaiChatClient({
-    apiKey: settings.zaiApiKey,
+  const generator = new OpenRouterChatClient({
+    apiKey: settings.openrouterApiKey,
     model: settings.model,
     maxOutputTokens: settings.maxOutputTokens,
   })

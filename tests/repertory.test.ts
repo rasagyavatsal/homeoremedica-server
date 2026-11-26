@@ -444,7 +444,7 @@ describe('production retriever with a repertory', () => {
     const repertory: Repertoriser = {
       kind: async () => 'case',
       repertorise: async () => {
-        throw new ProviderError('Z.AI chat request failed with status 500')
+        throw new ProviderError('OpenRouter embedding request failed with status 500')
       },
     }
 

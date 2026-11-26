@@ -455,7 +455,7 @@ it('unavailable corpus has a safe, actionable detail', async () => {
 it('missing provider configuration has a safe setup detail', async () => {
   const { post } = setup({
     getService: async () => {
-      throw new ConfigurationError('ZAI_API_KEY is required; private-secret')
+      throw new ConfigurationError('OPENROUTER_API_KEY is required; private-secret')
     },
   })
 
@@ -463,7 +463,7 @@ it('missing provider configuration has a safe setup detail', async () => {
 
   expect(response.status).toBe(503)
   const { detail } = await read(response)
-  expect(detail).toContain('ZAI_API_KEY')
+  expect(detail).toContain('OPENROUTER_API_KEY')
   expect(detail).not.toContain('private-secret')
 })
 
@@ -592,7 +592,6 @@ describe('production dependencies', () => {
     qdrantApiKey: undefined,
     model: 'catalog-model',
     maxOutputTokens: 4_096,
-    zaiApiKey: undefined,
     openrouterApiKey: undefined,
     firebaseProjectId: undefined,
     firebaseApiKey: undefined,

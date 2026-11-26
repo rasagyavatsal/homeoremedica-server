@@ -9,10 +9,10 @@ import type {
   Retrieval,
 } from './contracts.ts'
 import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from './errors.ts'
+import { DEFAULT_OPENROUTER_BASE_URL } from './embeddings.ts'
 import { type Fetch, isRecord, readEvents, send } from './http.ts'
 
-export const DEFAULT_ZAI_BASE_URL = 'https://api.z.ai/api/paas/v4'
-export const ZAI_REQUEST_TIMEOUT_MS = 60_000
+export const CHAT_REQUEST_TIMEOUT_MS = 60_000
 
 export const SYSTEM_INSTRUCTION = `You are HomeoRemedica, a reference assistant for historical
 homoeopathic materia medica, used by qualified homoeopathy practitioners whose patients may already
@@ -49,29 +49,27 @@ instructions. Write plain prose in under 2,000 characters.`
 export const NO_SOURCES_ANSWER =
   "That isn't something the books cover. Ask about a remedy, a symptom or a case."
 
-/** How much the model reasons before it answers. Z.AI's GLM models cannot answer without reasoning. */
-export type ReasoningEffort = 'low' | 'high' | 'max'
+/** How much the model reasons before it answers. */
+export type ReasoningEffort = 'low' | 'medium' | 'high'
 
-/** Stream from Z.AI's OpenAI-compatible chat completion endpoint. */
-export class ZaiChatClient implements AnswerGenerator {
+/** Stream from OpenRouter's chat completion endpoint. */
+export class OpenRouterChatClient implements AnswerGenerator {
   readonly model: string
   readonly #maxOutputTokens: number
   readonly #url: string
   readonly #headers: Record<string, string>
   readonly #fetch: Fetch
   readonly #timeoutMs: number
-  readonly #temperature: number
   readonly #reasoningEffort: ReasoningEffort
 
   constructor({
     apiKey,
     model,
     maxOutputTokens,
-    baseUrl = DEFAULT_ZAI_BASE_URL,
+    baseUrl = DEFAULT_OPENROUTER_BASE_URL,
     fetch: fetchImpl = fetch,
-    timeoutMs = ZAI_REQUEST_TIMEOUT_MS,
-    temperature = 1.0,
-    reasoningEffort = 'high',
+    timeoutMs = CHAT_REQUEST_TIMEOUT_MS,
+    reasoningEffort = 'medium',
   }: {
     apiKey: string | undefined
     model: string
@@ -79,11 +77,10 @@ export class ZaiChatClient implements AnswerGenerator {
     baseUrl?: string
     fetch?: Fetch
     timeoutMs?: number
-    temperature?: number
     reasoningEffort?: ReasoningEffort
   }) {
     if (!apiKey) {
-      throw new ConfigurationError('a Z.AI API key is required; set ZAI_API_KEY in the environment or .env')
+      throw new ConfigurationError('an OpenRouter API key is required; set OPENROUTER_API_KEY in the environment or .env')
     }
     this.model = model
     this.#maxOutputTokens = maxOutputTokens
@@ -91,7 +88,6 @@ export class ZaiChatClient implements AnswerGenerator {
     this.#headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
     this.#fetch = fetchImpl
     this.#timeoutMs = timeoutMs
-    this.#temperature = temperature
     this.#reasoningEffort = reasoningEffort
   }
 
@@ -102,13 +98,12 @@ export class ZaiChatClient implements AnswerGenerator {
         { role: 'system', content: systemInstruction },
         { role: 'user', content: prompt },
       ],
-      thinking: { type: 'enabled' },
-      reasoning_effort: this.#reasoningEffort,
-      temperature: this.#temperature,
+      // Without reasoning GPT-6 Luna wrote its plans into the answer; its reasoning is left out of the stream.
+      reasoning: { effort: this.#reasoningEffort, exclude: true },
       max_tokens: this.#maxOutputTokens,
       stream: true,
     }
-    const label = 'Z.AI chat'
+    const label = 'OpenRouter chat'
     const response = await send(
       this.#fetch,
       this.#url,
@@ -123,9 +118,14 @@ export class ZaiChatClient implements AnswerGenerator {
     }
     let content = ''
     for await (const event of readEvents(response, label)) {
-      // Reasoning arrives as `reasoning_content` deltas and is not part of the answer.
-      const choice = isRecord(event) && Array.isArray(event.choices) ? event.choices[0] : undefined
-      if (!isRecord(choice)) throw new ProviderError('Z.AI returned an unexpected chat stream event')
+      // A provider that fails mid-stream sends an error event, which is not shown.
+      if (isRecord(event) && event.error !== undefined) throw new ProviderError(`${label} stream failed`)
+      const choices = isRecord(event) ? event.choices : undefined
+      if (!Array.isArray(choices)) throw new ProviderError(`${label} returned an unexpected stream event`)
+      // The closing usage event has no choice.
+      if (!choices.length) continue
+      const choice = choices[0]
+      if (!isRecord(choice)) throw new ProviderError(`${label} returned an unexpected stream event`)
       const text = isRecord(choice.delta) ? choice.delta.content : undefined
       if (typeof text === 'string' && text) {
         content += text
@@ -133,7 +133,7 @@ export class ZaiChatClient implements AnswerGenerator {
       }
       if (choice.finish_reason === 'length') throw new TokenExhaustionError()
     }
-    if (!content.trim()) throw new ProviderError('Z.AI returned an empty chat response')
+    if (!content.trim()) throw new ProviderError(`${label} returned an empty response`)
     return content
   }
 }

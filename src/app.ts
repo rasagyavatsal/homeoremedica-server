@@ -380,8 +380,8 @@ function setupFailure(c: Context, error: unknown, logMessage: string) {
     return c.json(
       {
         detail:
-          'The production chat is not configured. Check OPENROUTER_API_KEY, ZAI_API_KEY, ' +
-          'QDRANT_URL and the RAG_ settings in .env, then restart the API.',
+          'The production chat is not configured. Check OPENROUTER_API_KEY, QDRANT_URL ' +
+          'and the RAG_ settings in .env, then restart the API.',
       },
       503,
     )
