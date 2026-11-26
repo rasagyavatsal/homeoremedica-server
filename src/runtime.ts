@@ -37,6 +37,8 @@ export interface Settings {
   firebaseAuthDomain: string | undefined
   /** Origins of web pages served elsewhere that may call the API. */
   webOrigins: string[]
+  /** The oldest Android versionCode the API still serves; 0 serves every build. */
+  minAndroidVersionCode: number
 }
 
 /**
@@ -57,6 +59,10 @@ export function loadSettings(
   if (!/^\d+$/.test(maxOutputTokens) || +maxOutputTokens < 1 || +maxOutputTokens > MAX_OUTPUT_TOKENS) {
     throw new ConfigurationError(`RAG_MAX_OUTPUT_TOKENS must be an integer from 1 to ${MAX_OUTPUT_TOKENS}`)
   }
+  const minAndroidVersionCode = value('MIN_ANDROID_VERSION_CODE') ?? '0'
+  if (!/^\d{1,10}$/.test(minAndroidVersionCode) || +minAndroidVersionCode > 2_100_000_000) {
+    throw new ConfigurationError('MIN_ANDROID_VERSION_CODE must be an Android versionCode')
+  }
   return {
     qdrantUrl: value('QDRANT_URL'),
     qdrantApiKey: value('QDRANT_API_KEY'),
@@ -67,6 +73,7 @@ export function loadSettings(
     firebaseApiKey: value('FIREBASE_API_KEY'),
     firebaseAuthDomain: value('FIREBASE_AUTH_DOMAIN'),
     webOrigins: (value('WEB_ORIGINS') ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
+    minAndroidVersionCode: Number(minAndroidVersionCode),
   }
 }
 

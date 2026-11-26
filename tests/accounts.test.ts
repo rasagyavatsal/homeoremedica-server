@@ -45,13 +45,13 @@ describe('client config', () => {
   it('offers the public Firebase settings when accounts are configured', async () => {
     const { app, accounts } = setup()
 
-    expect(await read(await app.request('/api/config'))).toEqual({ auth: accounts.config })
+    expect(await read(await app.request('/api/config'))).toEqual({ auth: accounts.config, minAndroidVersionCode: 0 })
   })
 
   it('has no sign-in when accounts are not configured', async () => {
     const app = createApp({ getService: unexpected }, { rateLimiter: null })
 
-    expect(await read(await app.request('/api/config'))).toEqual({ auth: null })
+    expect(await read(await app.request('/api/config'))).toEqual({ auth: null, minAndroidVersionCode: 0 })
     const response = await app.request('/api/chats', { headers: { Authorization: 'Bearer token-alice' } })
     expect(response.status).toBe(503)
   })

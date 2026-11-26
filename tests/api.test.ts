@@ -597,6 +597,7 @@ describe('production dependencies', () => {
     firebaseApiKey: undefined,
     firebaseAuthDomain: undefined,
     webOrigins: [],
+    minAndroidVersionCode: 0,
   }
 
   it('builds the service once, even for concurrent requests', async () => {
@@ -625,5 +626,12 @@ describe('production dependencies', () => {
     const dependencies = productionDependencies({ settings: () => ({ ...settings, webOrigins: ['https://homeoremedica.com'] }) })
 
     expect(dependencies.getWebOrigins?.()).toEqual(['https://homeoremedica.com'])
+  })
+
+  it('tells the Android app the oldest build the API serves', async () => {
+    const dependencies = productionDependencies({ settings: () => ({ ...settings, minAndroidVersionCode: 42 }) })
+    const response = await createApp({ ...dependencies, getAccounts: () => null }, { rateLimiter: null }).request('/api/config')
+
+    expect(await response.json()).toEqual({ auth: null, minAndroidVersionCode: 42 })
   })
 })

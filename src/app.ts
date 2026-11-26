@@ -51,6 +51,8 @@ export interface AppDependencies {
   getAccounts?: () => Accounts | null
   /** Origins of web pages served elsewhere that may call the API; none means same-origin only. */
   getWebOrigins?: () => readonly string[]
+  /** The oldest Android versionCode the API still serves; 0 or none serves every build. */
+  getMinAndroidVersionCode?: () => number
 }
 
 interface SignedIn {
@@ -85,6 +87,7 @@ export function productionDependencies({
   return {
     getAccounts: () => (accounts ??= loadAccounts(settings())),
     getWebOrigins: () => (webOrigins ??= settings().webOrigins),
+    getMinAndroidVersionCode: () => settings().minAndroidVersionCode,
     getService() {
       // Share one in-flight build between concurrent requests. Conversation state stays in
       // the request and is never shared between browser sessions.
@@ -133,7 +136,12 @@ export function createApp(
 
   app.get('/api/books', (c) => c.json({ books: BOOKS } satisfies BookCatalog))
 
-  app.get('/api/config', (c) => c.json({ auth: dependencies.getAccounts?.()?.config ?? null } satisfies ClientConfig))
+  app.get('/api/config', (c) =>
+    c.json({
+      auth: dependencies.getAccounts?.()?.config ?? null,
+      minAndroidVersionCode: dependencies.getMinAndroidVersionCode?.() ?? 0,
+    } satisfies ClientConfig),
+  )
 
   const signedIn = createMiddleware<SignedIn>(async (c, next) => {
     const accounts = dependencies.getAccounts?.() ?? null

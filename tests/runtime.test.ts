@@ -37,6 +37,7 @@ describe('settings', () => {
       firebaseApiKey: undefined,
       firebaseAuthDomain: undefined,
       webOrigins: [],
+      minAndroidVersionCode: 0,
     })
   })
 
@@ -56,6 +57,13 @@ describe('settings', () => {
     const settings = loadSettings({ WEB_ORIGINS: 'https://homeoremedica.com, https://homeoremedica.web.app,' }, directory)
 
     expect(settings.webOrigins).toEqual(['https://homeoremedica.com', 'https://homeoremedica.web.app'])
+  })
+
+  it('reads the oldest Android build the API serves', () => {
+    expect(loadSettings({ MIN_ANDROID_VERSION_CODE: '42' }, directory).minAndroidVersionCode).toBe(42)
+    for (const code of ['-1', '4.2', 'latest', '9999999999']) {
+      expect(() => loadSettings({ MIN_ANDROID_VERSION_CODE: code }, directory)).toThrow(/MIN_ANDROID_VERSION_CODE/)
+    }
   })
 
   it.each(['0', '8193', 'many', '12.5'])('rejects RAG_MAX_OUTPUT_TOKENS=%s', (value) => {

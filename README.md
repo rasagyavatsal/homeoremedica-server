@@ -32,6 +32,7 @@ gcloud auth application-default login     # only for saved chats locally (Firest
 | `FIREBASE_API_KEY` | None | Public browser key for Firebase Authentication. |
 | `FIREBASE_AUTH_DOMAIN` | `<project>.firebaseapp.com` | Hosts the Google sign-in pop-up. |
 | `WEB_ORIGINS` | None | Web app origins allowed through CORS, comma-separated. |
+| `MIN_ANDROID_VERSION_CODE` | `0` | Android builds below this versionCode must update first. |
 | `HOST` | `127.0.0.1` | Address `npm start` listens on. |
 | `PORT` | `8000` | Port `npm start` listens on. |
 
@@ -81,6 +82,13 @@ project trusts only its own branch of the two repos through its own Workload Ide
 keeps its configuration between deploys: `QDRANT_URL`, `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY` and
 `WEB_ORIGINS` (the web app's origins, comma-separated) are plain, the other keys come from Secret
 Manager, and `.env` is not copied into the image.
+
+Before a deploy that breaks older Android builds, ask them to update:
+
+```sh
+gcloud run services update homeoremedica --region asia-south1 --project $P \
+  --update-env-vars MIN_ANDROID_VERSION_CODE=<oldest versionCode that works>
+```
 
 One-time setup of a project `$P` (number `$N`), shared with the web app, after creating it, linking
 billing and adding Firebase:
