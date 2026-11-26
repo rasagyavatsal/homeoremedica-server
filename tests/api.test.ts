@@ -357,6 +357,15 @@ describe('compaction', () => {
   })
 })
 
+it('ignores the symptoms and diseases older Android builds send', async () => {
+  const { service, post } = setup()
+
+  const response = await post({ message: 'question', symptoms: ['thirst'], diseases: ['fever'] })
+
+  expect(response.status).toBe(200)
+  expect(service.requests).toEqual([{ message: 'question', history: [] }])
+})
+
 describe('invalid requests are rejected before chat', () => {
   it.each([
     { message: '  ' },

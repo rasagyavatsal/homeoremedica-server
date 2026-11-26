@@ -379,9 +379,11 @@ it('rejects book filters', () => {
   expect(() => request({ message: 'question', bookIds: ['kent_lectures'] })).toThrow(/unexpected request field/)
 })
 
-it('rejects confirmed symptoms and diseases', () => {
-  expect(() => request({ message: 'A weepy woman.', symptoms: ['Mind: weeping'] })).toThrow(/unexpected request field/)
-  expect(() => request({ message: 'A weepy woman.', diseases: ['asthma'] })).toThrow(/unexpected request field/)
+it('drops confirmed symptoms and diseases', () => {
+  expect(request({ message: 'A weepy woman.', symptoms: ['Mind: weeping'], diseases: ['asthma'] })).toEqual({
+    message: 'A weepy woman.',
+    history: [],
+  })
 })
 
 it('production retriever searches on recent questions only', async () => {
