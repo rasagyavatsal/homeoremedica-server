@@ -16,7 +16,7 @@ import {
   type Retriever,
 } from './contracts.ts'
 import { shouldCompact } from './conversation.ts'
-import { COMPACTION_INSTRUCTION, NO_SOURCES_ANSWER, SYSTEM_INSTRUCTION, compactionPrompt, generationPrompt } from './generation.ts'
+import { COMPACTION_INSTRUCTION, REPLY_INSTRUCTION, SYSTEM_INSTRUCTION, compactionPrompt, generationPrompt, replyPrompt } from './generation.ts'
 
 /** How many passages of each book an answer is generated from. */
 export const SOURCE_LIMIT = 2
@@ -89,28 +89,26 @@ export class ChatService {
     onSources?.(citations)
 
     const compacted = await compacting
-    let generatedAnswer: string
-    if (!sources.length) {
-      // Without evidence the model could only decline, so skip the call.
-      generatedAnswer = NO_SOURCES_ANSWER
-      onText?.(generatedAnswer)
-    } else {
-      let streamed = 0
-      generatedAnswer = (
-        await this.#generator.generate(generationPrompt({ ...request, ...compacted }, retrieval, { maxChars: this.#promptCharLimit }), {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          signal,
-          // Stream no more than the answer limit; the final answer is authoritative.
-          onText:
-            onText &&
-            ((text) => {
-              const piece = text.slice(0, MAX_GENERATED_ANSWER_CHARS - streamed)
-              streamed += piece.length
-              if (piece) onText(piece)
-            }),
-        })
-      ).trim()
-    }
+    // A message the books have nothing on, such as thanks or a question they do not cover, gets a
+    // short reply instead of an answer.
+    const [prompt, systemInstruction] = sources.length
+      ? [generationPrompt({ ...request, ...compacted }, retrieval, { maxChars: this.#promptCharLimit }), SYSTEM_INSTRUCTION]
+      : [replyPrompt(request), REPLY_INSTRUCTION]
+    let streamed = 0
+    let generatedAnswer = (
+      await this.#generator.generate(prompt, {
+        systemInstruction,
+        signal,
+        // Stream no more than the answer limit; the final answer is authoritative.
+        onText:
+          onText &&
+          ((text) => {
+            const piece = text.slice(0, MAX_GENERATED_ANSWER_CHARS - streamed)
+            streamed += piece.length
+            if (piece) onText(piece)
+          }),
+      })
+    ).trim()
     if (generatedAnswer.length > MAX_GENERATED_ANSWER_CHARS) {
       generatedAnswer = `${generatedAnswer.slice(0, MAX_GENERATED_ANSWER_CHARS).trimEnd()}…`
     }

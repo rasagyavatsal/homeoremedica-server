@@ -10,7 +10,7 @@ import {
   type Retriever,
 } from '../src/contracts.ts'
 import { ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
-import { COMPACTION_INSTRUCTION } from '../src/generation.ts'
+import { COMPACTION_INSTRUCTION, REPLY_INSTRUCTION, SYSTEM_INSTRUCTION } from '../src/generation.ts'
 import { ChatService } from '../src/service.ts'
 
 const request = (input: Record<string, unknown>): ChatRequest => ChatRequestSchema.parse(input)
@@ -44,14 +44,15 @@ class StubRetriever implements Retriever {
 class StubGenerator implements AnswerGenerator {
   readonly model = 'openai/gpt-6-luna'
   generationPrompt: string | null = null
+  systemInstruction: string | null = null
   signal: AbortSignal | undefined
   failure: unknown = null
   pieces = ['Kent describes irritability ', 'and oversensitivity [1].']
 
   async generate(prompt: string, { systemInstruction, onText, signal }: GenerateOptions): Promise<string> {
     this.generationPrompt = prompt
+    this.systemInstruction = systemInstruction
     this.signal = signal
-    expect(systemInstruction).toContain('medical advice')
     if (this.failure) throw this.failure
     for (const piece of this.pieces) onText?.(piece)
     return this.pieces.join('')
@@ -70,6 +71,7 @@ it('grounds a conversation-aware answer in versioned sources', async () => {
   const response = await service.chat(chatRequest)
 
   expect(retriever.searchCall).toEqual({ request: chatRequest, limit: 2 })
+  expect(generator.systemInstruction).toBe(SYSTEM_INSTRUCTION)
   expect(generator.generationPrompt).toContain("[1] Kent's Lectures — NUX VOMICA — MIND")
   expect(generator.generationPrompt).toContain('untrusted user-provided context')
   expect(generator.generationPrompt).toContain('untrusted reference data')
@@ -214,20 +216,23 @@ it('rejects oversized citation text before generating an answer', async () => {
   expect(generator.generationPrompt).toBeNull()
 })
 
-it('answers without the model when retrieval finds no sources', async () => {
+it('replies to a message the books have nothing on from the message alone', async () => {
   const retriever = new StubRetriever()
   retriever.retrieve = async () => ({ sources: [], repertories: [] })
   const generator = new StubGenerator()
+  generator.pieces = ["You're welcome! ", 'Ask about a remedy, a symptom or a case.']
 
   const streamed: string[] = []
 
-  const response = await new ChatService({ retriever, generator }).chat(request({ message: 'question' }), {
-    onText: (text) => streamed.push(text),
-  })
+  const response = await new ChatService({ retriever, generator }).chat(
+    request({ message: 'Thanks, that was helpful!', history: [{ role: 'user', content: 'Tell me about Sepia.' }] }),
+    { onText: (text) => streamed.push(text) },
+  )
 
-  expect(generator.generationPrompt).toBeNull()
-  expect(response.answer).toBe("That isn't something the books cover. Ask about a remedy, a symptom or a case.")
-  expect(streamed).toEqual([response.answer])
+  expect(generator.systemInstruction).toBe(REPLY_INSTRUCTION)
+  expect(generator.generationPrompt).toBe('<latest_user_message>Thanks, that was helpful!</latest_user_message>')
+  expect(response.answer).toBe("You're welcome! Ask about a remedy, a symptom or a case.")
+  expect(streamed).toEqual(generator.pieces)
   expect(response.sources).toEqual([])
 })
 
