@@ -22,11 +22,10 @@ export const OPPOSITE_CUTOFF = 0.7
 export const MAX_DECISION_QUESTIONS = 100
 export const DECISION_TIMEOUT_MS = 15_000
 /**
- * Each attempt to sort a question, three times the slowest of 72 test sorts: the books are not
- * searched until it answers, and a busy model would otherwise hold the answer up for two full
- * DECISION_TIMEOUT_MS.
+ * Each attempt to sort a question, as long as a rewrite may take: the books are not searched until it
+ * answers, and a busy model would otherwise hold the answer up for two full DECISION_TIMEOUT_MS.
  */
-export const SORT_TIMEOUT_MS = 3_000
+export const SORT_TIMEOUT_MS = 8_000
 const LABEL = 'OpenRouter decision'
 
 /** What each kind of question is, for the decision model to choose between. */
@@ -138,10 +137,7 @@ export class DecisionOpposites implements OppositeCheck {
   }
 }
 
-/**
- * Sorts a question with the decision model, which sorted 56 test questions as well as the chat model
- * in half the time. When it fails, the question is taken for a case, so its symptoms are read.
- */
+/** Sorts a question with the decision model, which sorted 56 test questions as well as the chat model in half the time. */
 export class DecisionCaseClassifier implements CaseClassifier {
   readonly #decisions: Decisions
 
@@ -150,20 +146,14 @@ export class DecisionCaseClassifier implements CaseClassifier {
   }
 
   async classify(text: string, { signal }: Cancellable = {}): Promise<QuestionKind> {
-    try {
-      const [answer] = await this.#decisions.answer(
-        `The latest questions a user put to a homoeopathic reference, oldest first: ${JSON.stringify(text)}`,
-        [{ type: 'choice', instructions: 'What kind of message is the latest question?', criteria: KIND_CRITERIA }],
-        signal,
-      )
-      const kind = answer?.choice
-      if (kind === 'case' || kind === 'question' || kind === 'off-topic') return kind
-      throw new ProviderError(`${LABEL} returned no answer for a question`)
-    } catch (error) {
-      if (signal?.aborted) throw error
-      console.error('Sorting the question with the decision model failed; taking it for a case', error)
-      return 'case'
-    }
+    const [answer] = await this.#decisions.answer(
+      `The latest questions a user put to a homoeopathic reference, oldest first: ${JSON.stringify(text)}`,
+      [{ type: 'choice', instructions: 'What kind of message is the latest question?', criteria: KIND_CRITERIA }],
+      signal,
+    )
+    const kind = answer?.choice
+    if (kind === 'case' || kind === 'question' || kind === 'off-topic') return kind
+    throw new ProviderError(`${LABEL} returned no answer for a question`)
   }
 }
 

@@ -165,7 +165,8 @@ export function rewriteFrom(request: ChatRequest, { query, case: picked, symptom
     // A symptom too long to search is split where it can be, as a case is without the model.
     .flatMap((symptom) => (symptom.length > MAX_SYMPTOM_CHARS ? splitCase(symptom) : [symptom]))
   const rewritten = typeof query === 'string' ? query.trim().slice(0, MAX_RETRIEVAL_QUERY_CHARS) : ''
-  return { query: rewritten || unrewritten(request).query, caseMessages, symptoms: distinct(copied) }
+  if (!rewritten) throw new ProviderError(`${LABEL} returned no query`)
+  return { query: rewritten, caseMessages, symptoms: distinct(copied) }
 }
 
 /**

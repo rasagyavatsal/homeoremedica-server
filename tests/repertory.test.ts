@@ -479,6 +479,31 @@ describe('production retriever with a repertory', () => {
     expect(stopped?.aborted).toBe(true)
   })
 
+  it('fails when sorting the question fails, and stops the rewrite', async () => {
+    const { corpus, calls } = searching()
+    const cause = new ProviderError('OpenRouter decision request failed with status 500')
+    let stopped: AbortSignal | undefined
+    const rewriter = {
+      rewrite: (_request: ChatRequest, { signal }: { signal?: AbortSignal | undefined } = {}) =>
+        new Promise<never>((_resolve, reject) => {
+          stopped = signal
+          signal?.addEventListener('abort', () => reject(signal.reason))
+        }),
+    }
+    const repertory: Repertoriser = {
+      kind: async () => {
+        throw cause
+      },
+      repertorise: vi.fn(),
+    }
+
+    await expect(new ProductionRetriever(corpus, embedder, { repertory, rewriter }).retrieve(request('A weepy woman.'), { limit: 8 })).rejects.toBe(
+      cause,
+    )
+    expect(stopped?.aborted).toBe(true)
+    expect(calls).toEqual([])
+  })
+
   it('stops every request it makes when the user stops', async () => {
     const { corpus } = searching()
     const signals: (AbortSignal | undefined)[] = []

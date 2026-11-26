@@ -54,10 +54,21 @@ export class ProductionRetriever implements Retriever {
   }
 
   async retrieve(request: ChatRequest, { limit, signal }: { limit: number } & Cancellable): Promise<Retrieval> {
-    // Stops the rewrite when the question turns out off-topic, and every request when the user stops.
+    // Stops the requests still running when the question turns out off-topic, a step fails or the user stops.
     const abandoned = new AbortController()
     const stopped = signal ? AbortSignal.any([signal, abandoned.signal]) : abandoned.signal
+    try {
+      return await this.#search(request, limit, stopped, abandoned)
+    } catch (error) {
+      abandoned.abort()
+      throw error
+    }
+  }
+
+  async #search(request: ChatRequest, limit: number, stopped: AbortSignal, abandoned: AbortController): Promise<Retrieval> {
     const rewriting = this.#rewrite(request, stopped)
+    // A rewrite left behind by a failed sort is stopped, not awaited.
+    rewriting.catch(() => {})
     // Answers are left out of the sort: they are long enough to drown the questions.
     const kind: QuestionKind = this.#repertory ? await this.#repertory.kind(questions(request), { signal: stopped }) : 'question'
     if (kind === 'off-topic') {
@@ -86,15 +97,9 @@ export class ProductionRetriever implements Retriever {
     return { sources: [...passages, ...rubrics], repertories }
   }
 
-  /** The rewrite of the latest message or, when it fails, the message as it was sent. */
+  /** The rewrite of the latest message, or the message as it was sent without a rewriter. */
   async #rewrite(request: ChatRequest, signal: AbortSignal): Promise<Rewrite> {
-    if (!this.#rewriter) return unrewritten(request)
-    try {
-      return await this.#rewriter.rewrite(request, { signal })
-    } catch (error) {
-      if (!signal.aborted) console.error('Rewriting the message failed; searching it as it was sent', error)
-      return unrewritten(request)
-    }
+    return this.#rewriter ? this.#rewriter.rewrite(request, { signal }) : unrewritten(request)
   }
 
   /** The repertorisation of the case's symptoms. */

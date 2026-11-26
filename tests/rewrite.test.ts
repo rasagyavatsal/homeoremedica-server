@@ -117,8 +117,8 @@ describe('rewriteFrom', () => {
     expect(symptoms).toEqual(['Wakes at 3 a.m.', 'Burning pain and more burning', 'and more burning', 'worse at 4 p.m.'])
   })
 
-  it('searches the message as it was sent without a query', () => {
-    expect(rewriteFrom(CHAT, { query: ' ' }).query).toBe(CHAT.message)
+  it('fails without a query', () => {
+    expect(() => rewriteFrom(CHAT, { query: ' ' })).toThrow(ProviderError)
   })
 })
 

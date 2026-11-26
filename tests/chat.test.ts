@@ -431,30 +431,22 @@ it('production retriever searches a question by its rewrite', async () => {
   expect(searchCall).toEqual(['Nux vomica irritability', [1.0, 0.0], 8])
 })
 
-it('production retriever searches the message as it was sent when the rewrite fails', async () => {
-  const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
-  let embedded: string | null = null
-  const corpus: SearchableRelease = { search: async () => [] }
-  const embedder = {
-    async embedQuery(text: string) {
-      embedded = text
-      return [1.0, 0.0]
-    },
-  }
+it('production retriever fails without searching when the rewrite fails', async () => {
+  const cause = new ProviderTimeoutError('OpenRouter rewrite request timed out')
+  const embedQuery = vi.fn()
   const rewriter = {
     rewrite: async (): Promise<never> => {
-      throw new ProviderError('OpenRouter rewrite request timed out')
+      throw cause
     },
   }
 
-  await new ProductionRetriever(corpus, embedder, { rewriter }).retrieve(
-    request({ message: 'And its mental symptoms?', history: [{ role: 'user', content: 'Tell me about Nux vomica.' }] }),
-    { limit: 8 },
-  )
-
-  expect(embedded).toBe('And its mental symptoms?')
-  expect(logged).toHaveBeenCalledOnce()
-  logged.mockRestore()
+  await expect(
+    new ProductionRetriever({ search: async () => [] }, { embedQuery }, { rewriter }).retrieve(
+      request({ message: 'And its mental symptoms?', history: [{ role: 'user', content: 'Tell me about Nux vomica.' }] }),
+      { limit: 8 },
+    ),
+  ).rejects.toBe(cause)
+  expect(embedQuery).not.toHaveBeenCalled()
 })
 
 it('production retriever leaves an embedding failure for the caller to classify', async () => {

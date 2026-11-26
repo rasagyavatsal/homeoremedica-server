@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import {
   DecisionCaseClassifier,
@@ -9,7 +9,7 @@ import {
   MAX_DECISION_QUESTIONS,
   SORT_TIMEOUT_MS,
 } from '../src/decisions.ts'
-import { ProviderError } from '../src/errors.ts'
+import { ProviderError, ProviderTimeoutError } from '../src/errors.ts'
 import type { Fetch } from '../src/http.ts'
 import { fakeFetch, json } from './fakes.ts'
 
@@ -114,21 +114,21 @@ describe('decision case classifier', () => {
     ['fails', new Response('provider secret', { status: 500 })],
     ['gives no choice', json({ answers: { q0: { type: 'choice' } } })],
     ['chooses another kind', choice('remedy')],
-  ])('takes the question for a case when the decision model %s', async (_, response) => {
-    expect(await new DecisionCaseClassifier({ apiKey: 'key', fetch: fakeFetch(response) }).classify('What is Sulphur?')).toBe('case')
+  ])('fails when the decision model %s', async (_, response) => {
+    const error = await new DecisionCaseClassifier({ apiKey: 'key', fetch: fakeFetch(response) }).classify('What is Sulphur?').catch((error: unknown) => error)
+
+    expect(error).toBeInstanceOf(ProviderError)
+    expect(String(error)).not.toContain('provider secret')
   })
 
-  it('takes the question for a case when sorting it takes too long', async () => {
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('fails when sorting the question takes too long', async () => {
     const fetch: Fetch = (_url, init) =>
       new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)))
 
-    const kind = await new DecisionCaseClassifier({ apiKey: 'key', fetch, timeoutMs: 10 }).classify('What is Sulphur?')
-
-    expect(kind).toBe('case')
-    expect(String(logged.mock.calls[0]?.[1])).toMatch(/timed out/)
+    await expect(new DecisionCaseClassifier({ apiKey: 'key', fetch, timeoutMs: 10 }).classify('What is Sulphur?')).rejects.toBeInstanceOf(
+      ProviderTimeoutError,
+    )
     expect(SORT_TIMEOUT_MS).toBeLessThan(DECISION_TIMEOUT_MS)
-    logged.mockRestore()
   })
 
   it('fails once the question is cancelled', async () => {
