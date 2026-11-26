@@ -233,8 +233,8 @@ describe('Repertory', () => {
     ])
   })
 
-  it('keeps every rubric when the opposite check fails', async () => {
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('fails when the opposite check fails', async () => {
+    const cause = new ProviderError('OpenRouter decision request failed with status 500')
     const repertory = new Repertory({
       classifier,
       embedder: { embedQueries: async (texts) => texts.map(() => [0]) },
@@ -243,16 +243,12 @@ describe('Repertory', () => {
       },
       opposites: {
         opposites: async () => {
-          throw new ProviderError('OpenRouter decision request failed with status 500')
+          throw cause
         },
       },
     })
 
-    const result = await repertory.repertorise(['Thirstless'])
-
-    expect(result.symptoms[0]?.rubrics.map((found) => found.text)).toEqual(['Stomach: thirst', 'Stomach: thirstless', 'Chill: thirstless'])
-    expect(logged).toHaveBeenCalledOnce()
-    logged.mockRestore()
+    await expect(repertory.repertorise(['Thirstless'])).rejects.toBe(cause)
   })
 
   it('searches nothing without symptoms', async () => {
@@ -342,6 +338,8 @@ describe('production retriever with a repertory', () => {
       repertorise: async () => ({ symptoms, remedies: rankRemedies(symptoms) }),
     }
   }
+  // Finds one symptom in every case.
+  const rewriter = { rewrite: async ({ message }: ChatRequest) => ({ query: message, caseMessages: [message], symptoms: ['weepy'] }) }
   const names = ({ repertories }: { repertories: readonly { remedies: readonly { remedyName: string }[] }[] }) =>
     repertories.map(({ remedies }) => remedies.map((remedy) => remedy.remedyName))
 
@@ -350,6 +348,7 @@ describe('production retriever with a repertory', () => {
 
     const retrieval = await new ProductionRetriever(corpus, embedder, {
       repertory: repertoryOf('puls', 'sep', 'nat-m'),
+      rewriter,
     }).retrieve(request('A weepy, thirstless woman.'), { limit: 8 })
 
     expect(calls).toEqual([{ limit: 8 }])
@@ -366,7 +365,7 @@ describe('production retriever with a repertory', () => {
       repertorise: async () => ({ symptoms, remedies: rankRemedies(symptoms) }),
     }
 
-    const retrieval = await new ProductionRetriever(corpus, embedder, { repertory }).retrieve(request('A weepy woman.'), { limit: 5 })
+    const retrieval = await new ProductionRetriever(corpus, embedder, { repertory, rewriter }).retrieve(request('A weepy woman.'), { limit: 5 })
 
     expect(retrieval.sources.map((source) => source.chunkId)).toEqual(['chk_1', 'Mind: weeping', 'Mind: tearful'])
     expect(retrieval.repertories).toEqual([
@@ -383,6 +382,7 @@ describe('production retriever with a repertory', () => {
 
     const retrieval = await new ProductionRetriever(corpus, embedder, {
       repertory: repertoryOf('puls', 'sep', 'nat-m', 'ign', 'lach'),
+      rewriter,
     }).retrieve(request('A weepy woman.'), { limit: 8 })
 
     expect(calls).toEqual([{ limit: 8 }])
@@ -446,17 +446,19 @@ describe('production retriever with a repertory', () => {
     expect(searched).toEqual(['A weepy woman.\nShe is thirstless.'])
   })
 
-  it("splits a case without the model's symptoms at its commas and line breaks", async () => {
-    const { corpus } = searching()
-    const seen: unknown[] = []
-    const repertory: Repertoriser = {
-      kind: async () => 'case',
-      repertorise: async (symptoms) => (seen.push(symptoms), { symptoms: [], remedies: [] }),
-    }
+  it('ranks no remedies for a case whose symptoms the rewrite did not find', async () => {
+    const { corpus, calls } = searching()
+    const repertorise = vi.fn()
+    const rewriter = { rewrite: async () => ({ query: 'q', caseMessages: ['A weepy woman.'], symptoms: [] }) }
 
-    await new ProductionRetriever(corpus, embedder, { repertory }).retrieve(request('Weeps easily, thirstless\nWorse at night.'), { limit: 8 })
+    const retrieval = await new ProductionRetriever(corpus, embedder, {
+      repertory: { kind: async () => 'case', repertorise },
+      rewriter,
+    }).retrieve(request('A weepy woman.'), { limit: 8 })
 
-    expect(seen).toEqual([['Weeps easily', 'thirstless', 'Worse at night']])
+    expect(calls).toEqual([{ limit: 8 }])
+    expect(repertorise).not.toHaveBeenCalled()
+    expect(retrieval.repertories).toEqual([])
   })
 
   it('stops the rewrite of an off-topic question', async () => {
@@ -526,23 +528,25 @@ describe('production retriever with a repertory', () => {
     expect(signals.every((signal) => signal?.aborted)).toBe(true)
   })
 
-  it('searches the whole corpus when repertorisation fails', async () => {
-    const { corpus, calls } = searching()
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('fails when repertorisation fails, and stops the book search', async () => {
+    const cause = new ProviderError('OpenRouter embedding request failed with status 500')
+    let stopped: AbortSignal | undefined
+    const corpus: SearchableRelease = { search: async () => [] }
+    const waiting = {
+      embedQuery: (_text: string, { signal }: { signal?: AbortSignal | undefined } = {}) =>
+        new Promise<never>((_resolve, reject) => {
+          stopped = signal
+          signal?.addEventListener('abort', () => reject(signal.reason))
+        }),
+    }
     const repertory: Repertoriser = {
       kind: async () => 'case',
       repertorise: async () => {
-        throw new ProviderError('OpenRouter embedding request failed with status 500')
+        throw cause
       },
     }
 
-    const retrieval = await new ProductionRetriever(corpus, embedder, { repertory }).retrieve(request('A weepy woman.'), {
-      limit: 8,
-    })
-
-    expect(calls).toEqual([{ limit: 8 }])
-    expect(retrieval.repertories).toEqual([])
-    expect(logged).toHaveBeenCalledOnce()
-    logged.mockRestore()
+    await expect(new ProductionRetriever(corpus, waiting, { repertory, rewriter }).retrieve(request('A weepy woman.'), { limit: 8 })).rejects.toBe(cause)
+    expect(stopped?.aborted).toBe(true)
   })
 })

@@ -146,20 +146,12 @@ export class Repertory implements Repertoriser {
   /**
    * The matches without the rubrics that state the opposite of their symptom, such as `Stomach:
    * thirst` for a thirstless patient. Nearest embeddings often mean the opposite: they read what a
-   * rubric is about more than which way it goes. Without the check, or when it fails, every rubric
-   * is kept.
+   * rubric is about more than which way it goes. Without the check, every rubric is kept.
    */
   async #withoutOpposites(matches: readonly SymptomMatch[], signal: AbortSignal | undefined): Promise<readonly SymptomMatch[]> {
     if (!this.#opposites) return matches
     const pairs = matches.flatMap(({ symptom, rubrics }) => rubrics.map((rubric) => ({ symptom, rubric: rubric.text })))
-    let opposite: boolean[]
-    try {
-      opposite = await this.#opposites.opposites(pairs, { signal })
-    } catch (error) {
-      if (signal?.aborted) throw error
-      console.error('Checking rubrics for opposites failed; keeping them all', error)
-      return matches
-    }
+    const opposite = await this.#opposites.opposites(pairs, { signal })
     let at = 0
     return matches.map(({ symptom, rubrics }) => ({ symptom, rubrics: rubrics.filter(() => !opposite[at++]) }))
   }

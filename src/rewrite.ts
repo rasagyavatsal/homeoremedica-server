@@ -170,7 +170,7 @@ export function rewriteFrom(request: ChatRequest, { query, case: picked, symptom
 }
 
 /**
- * A case split into symptoms without a model, for when the model gives none: at every line break,
+ * Text split into symptoms without a model, for a symptom too long to search: at every line break,
  * comma and semicolon, and at a full stop that a new sentence follows.
  */
 export function splitCase(text: string): string[] {

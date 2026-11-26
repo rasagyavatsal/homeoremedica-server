@@ -10,8 +10,8 @@ import {
   type RetrievedSource,
   type Retriever,
 } from './contracts.ts'
-import { REPERTORIES, type Repertorisation, type Repertoriser, decisive, inRepertory, leadingRemedies } from './repertory.ts'
-import { type MessageRewriter, type Rewrite, splitCase, unrewritten } from './rewrite.ts'
+import { REPERTORIES, type Repertoriser, decisive, inRepertory, leadingRemedies } from './repertory.ts'
+import { type MessageRewriter, type Rewrite, unrewritten } from './rewrite.ts'
 
 export interface QueryEmbedder {
   embedQuery(text: string, options?: Cancellable): Promise<readonly number[]>
@@ -79,9 +79,11 @@ export class ProductionRetriever implements Retriever {
     // A case is searched in the user's own words, which a rewrite could lose.
     const caseText = caseMessages.join('\n')
     const searched = kind === 'case' ? caseText.slice(-MAX_RETRIEVAL_QUERY_CHARS) : query
+    // A case whose symptoms the rewrite could not find in the user's words gets no ranking.
+    const ranking = kind === 'case' && symptoms.length ? this.#repertory : undefined
     const [passages, repertorisation] = await Promise.all([
       this.#embedder.embedQuery(searched, { signal: stopped }).then((embedding) => this.#corpus.search(searched, embedding, { limit })),
-      kind === 'case' ? this.#repertorisation(symptoms.length ? symptoms : splitCase(caseText), stopped) : undefined,
+      ranking?.repertorise(symptoms, { signal: stopped }),
     ])
     // Each repertory ranks the remedies on its own, for an answer section of its own.
     const repertories: RepertoryRanking[] = []
@@ -100,19 +102,6 @@ export class ProductionRetriever implements Retriever {
   /** The rewrite of the latest message, or the message as it was sent without a rewriter. */
   async #rewrite(request: ChatRequest, signal: AbortSignal): Promise<Rewrite> {
     return this.#rewriter ? this.#rewriter.rewrite(request, { signal }) : unrewritten(request)
-  }
-
-  /** The repertorisation of the case's symptoms. */
-  async #repertorisation(symptoms: readonly string[], signal: AbortSignal): Promise<Repertorisation | undefined> {
-    if (!this.#repertory) return undefined
-    try {
-      return await this.#repertory.repertorise(symptoms, { signal })
-    } catch (error) {
-      if (signal.aborted) throw error
-      // The ranking is only a section of the answer; without it the books still answer.
-      console.error('Repertorisation failed; searching without it', error)
-      return undefined
-    }
   }
 }
 
