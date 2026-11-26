@@ -17,10 +17,12 @@ const request = (input: Record<string, unknown>): ChatRequest => ChatRequestSche
 
 class StubRetriever implements Retriever {
   searchCall: { request: ChatRequest; limit: number } | null = null
+  signal: AbortSignal | undefined
   failure: unknown = null
 
-  async retrieve(request: ChatRequest, { limit }: { limit: number }): Promise<Retrieval> {
+  async retrieve(request: ChatRequest, { limit, signal }: { limit: number; signal?: AbortSignal | undefined }): Promise<Retrieval> {
     this.searchCall = { request, limit }
+    this.signal = signal
     if (this.failure) throw this.failure
     return {
       repertories: [],
@@ -190,6 +192,15 @@ it('leaves a retrieval failure for the caller to classify', async () => {
   await expect(
     new ChatService({ retriever, generator: new StubGenerator() }).chat(request({ message: 'question' })),
   ).rejects.toBe(retriever.failure)
+})
+
+it('stops the search when the user stops', async () => {
+  const retriever = new StubRetriever()
+  const stop = new AbortController()
+
+  await new ChatService({ retriever, generator: new StubGenerator() }).chat(request({ message: 'question' }), { signal: stop.signal })
+
+  expect(retriever.signal).toBe(stop.signal)
 })
 
 it.each([new ProviderError('provider secret'), new TokenExhaustionError()])(

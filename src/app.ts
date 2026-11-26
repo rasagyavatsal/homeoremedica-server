@@ -304,7 +304,7 @@ export function createApp(
     }
 
     try {
-      return c.json(complete(await service.chat(request)))
+      return c.json(complete(await service.chat(request, { signal: c.req.raw.signal })))
     } catch (error) {
       const { detail, status } = chatFailure(error)
       return c.json({ detail }, status)

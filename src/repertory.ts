@@ -84,7 +84,7 @@ export interface Repertoriser {
   /** Whether the text describes a patient, asks about anything else, or is off-topic. */
   kind(text: string, options?: Cancellable): Promise<QuestionKind>
   /** Ranks remedies for a case's symptoms. */
-  repertorise(symptoms: readonly string[]): Promise<Repertorisation>
+  repertorise(symptoms: readonly string[], options?: Cancellable): Promise<Repertorisation>
 }
 
 export interface CaseClassifier {
@@ -92,7 +92,7 @@ export interface CaseClassifier {
 }
 
 export interface QueriesEmbedder {
-  embedQueries(texts: readonly string[]): Promise<readonly (readonly number[])[]>
+  embedQueries(texts: readonly string[], options?: Cancellable): Promise<readonly (readonly number[])[]>
 }
 
 export interface RubricSearch {
@@ -127,13 +127,16 @@ export class Repertory implements Repertoriser {
     return this.#classifier.classify(text, options)
   }
 
-  async repertorise(symptoms: readonly string[]): Promise<Repertorisation> {
+  async repertorise(symptoms: readonly string[], { signal }: Cancellable = {}): Promise<Repertorisation> {
     if (!symptoms.length) return { symptoms: [], remedies: [] }
-    const embeddings = await this.#embedder.embedQueries(symptoms)
+    const embeddings = await this.#embedder.embedQueries(symptoms, { signal })
     const found = await this.#rubrics.search(embeddings, {
       limit: this.#opposites ? CANDIDATE_RUBRICS : RUBRICS_PER_SYMPTOM,
     })
-    const candidates = await this.#withoutOpposites(symptoms.map((symptom, index) => ({ symptom, rubrics: found[index] ?? [] })))
+    const candidates = await this.#withoutOpposites(
+      symptoms.map((symptom, index) => ({ symptom, rubrics: found[index] ?? [] })),
+      signal,
+    )
     const matches = distinctMatches(
       candidates.map(({ symptom, rubrics }) => ({ symptom, rubrics: nearestOfEach(rubrics, RUBRICS_PER_SYMPTOM) })),
     )
@@ -146,13 +149,14 @@ export class Repertory implements Repertoriser {
    * rubric is about more than which way it goes. Without the check, or when it fails, every rubric
    * is kept.
    */
-  async #withoutOpposites(matches: readonly SymptomMatch[]): Promise<readonly SymptomMatch[]> {
+  async #withoutOpposites(matches: readonly SymptomMatch[], signal: AbortSignal | undefined): Promise<readonly SymptomMatch[]> {
     if (!this.#opposites) return matches
     const pairs = matches.flatMap(({ symptom, rubrics }) => rubrics.map((rubric) => ({ symptom, rubric: rubric.text })))
     let opposite: boolean[]
     try {
-      opposite = await this.#opposites.opposites(pairs)
+      opposite = await this.#opposites.opposites(pairs, { signal })
     } catch (error) {
+      if (signal?.aborted) throw error
       console.error('Checking rubrics for opposites failed; keeping them all', error)
       return matches
     }

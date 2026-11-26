@@ -479,6 +479,28 @@ describe('production retriever with a repertory', () => {
     expect(stopped?.aborted).toBe(true)
   })
 
+  it('stops every request it makes when the user stops', async () => {
+    const { corpus } = searching()
+    const signals: (AbortSignal | undefined)[] = []
+    const repertory: Repertoriser = {
+      kind: async (_text, options) => (signals.push(options?.signal), 'case'),
+      repertorise: async (_symptoms, options) => (signals.push(options?.signal), { symptoms: [], remedies: [] }),
+    }
+    const rewriter = {
+      rewrite: async (_request: ChatRequest, options?: { signal?: AbortSignal | undefined }) => (
+        signals.push(options?.signal), { query: 'q', caseMessages: ['A weepy woman.'], symptoms: ['weepy'] }
+      ),
+    }
+    const watched = { embedQuery: async (_text: string, options?: { signal?: AbortSignal | undefined }) => (signals.push(options?.signal), [1.0]) }
+    const stop = new AbortController()
+
+    await new ProductionRetriever(corpus, watched, { repertory, rewriter }).retrieve(request('A weepy woman.'), { limit: 8, signal: stop.signal })
+    stop.abort()
+
+    expect(signals).toHaveLength(4)
+    expect(signals.every((signal) => signal?.aborted)).toBe(true)
+  })
+
   it('searches the whole corpus when repertorisation fails', async () => {
     const { corpus, calls } = searching()
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})

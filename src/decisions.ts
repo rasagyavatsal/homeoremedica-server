@@ -45,7 +45,7 @@ export interface SymptomRubric {
 
 export interface OppositeCheck {
   /** For each pair, whether the rubric states the opposite of the symptom. */
-  opposites(pairs: readonly SymptomRubric[]): Promise<boolean[]>
+  opposites(pairs: readonly SymptomRubric[], options?: Cancellable): Promise<boolean[]>
 }
 
 interface DecisionOptions {
@@ -125,13 +125,14 @@ export class DecisionOpposites implements OppositeCheck {
     this.#decisions = new Decisions(options)
   }
 
-  async opposites(pairs: readonly SymptomRubric[]): Promise<boolean[]> {
+  async opposites(pairs: readonly SymptomRubric[], { signal }: Cancellable = {}): Promise<boolean[]> {
     const answers = await this.#decisions.answer(
       'Symptoms of a homoeopathic case, each paired with a candidate rubric from a repertory.',
       pairs.map(({ symptom, rubric }) => ({
         type: 'noul',
         instructions: `Symptom: ${JSON.stringify(symptom)}. Rubric: ${JSON.stringify(rubric)}. Does the rubric state the opposite of the symptom?`,
       })),
+      signal,
     )
     return answers.map((answer) => probability(answer) >= OPPOSITE_CUTOFF)
   }

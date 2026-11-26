@@ -1,5 +1,6 @@
 /** voyage-4 query embeddings through OpenRouter. */
 
+import type { Cancellable } from './contracts.ts'
 import { ConfigurationError, ProviderError, ProviderTimeoutError } from './errors.ts'
 import { type Fetch, isRecord, readJson, send } from './http.ts'
 
@@ -47,12 +48,12 @@ export class VoyageQueryEmbedder {
     this.#timeoutMs = timeoutMs
   }
 
-  async embedQuery(text: string): Promise<number[]> {
-    return (await this.embedQueries([text]))[0]!
+  async embedQuery(text: string, options: Cancellable = {}): Promise<number[]> {
+    return (await this.embedQueries([text], options))[0]!
   }
 
   /** One embedding per text, in order, from one request. */
-  async embedQueries(texts: readonly string[]): Promise<number[][]> {
+  async embedQueries(texts: readonly string[], { signal }: Cancellable = {}): Promise<number[][]> {
     const body = JSON.stringify({
       model: VOYAGE_EMBEDDING_MODEL,
       input: texts,
@@ -66,7 +67,7 @@ export class VoyageQueryEmbedder {
         this.#fetch,
         this.#url,
         { method: 'POST', headers: this.#headers, body },
-        { label: LABEL, timeoutMs: this.#timeoutMs },
+        { label: LABEL, timeoutMs: this.#timeoutMs, signal },
       )
       if (response.status === 200) return parseEmbeddings(await readJson(response, LABEL), texts.length)
       if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt === MAX_ATTEMPTS) {

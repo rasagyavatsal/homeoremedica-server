@@ -332,9 +332,9 @@ export function answerRatings({ rating, sources, reasons, comment }: SavedRating
 export interface Retriever {
   /**
    * `limit` is how many passages each book gives; the rubrics come on top of them. An off-topic
-   * question gets nothing.
+   * question gets nothing. `signal` stops every request it makes.
    */
-  retrieve(request: ChatRequest, options: { limit: number }): Promise<Retrieval>
+  retrieve(request: ChatRequest, options: { limit: number } & Cancellable): Promise<Retrieval>
 }
 
 export interface GenerateOptions {

@@ -1,6 +1,7 @@
 /** Production query embedding and corpus search. */
 
 import {
+  type Cancellable,
   type ChatRequest,
   MAX_RETRIEVAL_QUERY_CHARS,
   type QuestionKind,
@@ -13,7 +14,7 @@ import { REPERTORIES, type Repertorisation, type Repertoriser, decisive, inReper
 import { type MessageRewriter, type Rewrite, splitCase, unrewritten } from './rewrite.ts'
 
 export interface QueryEmbedder {
-  embedQuery(text: string): Promise<readonly number[]>
+  embedQuery(text: string, options?: Cancellable): Promise<readonly number[]>
 }
 
 export interface SearchableRelease {
@@ -52,11 +53,13 @@ export class ProductionRetriever implements Retriever {
     this.#rewriter = rewriter
   }
 
-  async retrieve(request: ChatRequest, { limit }: { limit: number }): Promise<Retrieval> {
+  async retrieve(request: ChatRequest, { limit, signal }: { limit: number } & Cancellable): Promise<Retrieval> {
+    // Stops the rewrite when the question turns out off-topic, and every request when the user stops.
     const abandoned = new AbortController()
-    const rewriting = this.#rewrite(request, abandoned.signal)
+    const stopped = signal ? AbortSignal.any([signal, abandoned.signal]) : abandoned.signal
+    const rewriting = this.#rewrite(request, stopped)
     // Answers are left out of the sort: they are long enough to drown the questions.
-    const kind: QuestionKind = this.#repertory ? await this.#repertory.kind(questions(request)) : 'question'
+    const kind: QuestionKind = this.#repertory ? await this.#repertory.kind(questions(request), { signal: stopped }) : 'question'
     if (kind === 'off-topic') {
       abandoned.abort()
       return { sources: [], repertories: [] }
@@ -66,8 +69,8 @@ export class ProductionRetriever implements Retriever {
     const caseText = caseMessages.join('\n')
     const searched = kind === 'case' ? caseText.slice(-MAX_RETRIEVAL_QUERY_CHARS) : query
     const [passages, repertorisation] = await Promise.all([
-      this.#embedder.embedQuery(searched).then((embedding) => this.#corpus.search(searched, embedding, { limit })),
-      kind === 'case' ? this.#repertorisation(symptoms.length ? symptoms : splitCase(caseText)) : undefined,
+      this.#embedder.embedQuery(searched, { signal: stopped }).then((embedding) => this.#corpus.search(searched, embedding, { limit })),
+      kind === 'case' ? this.#repertorisation(symptoms.length ? symptoms : splitCase(caseText), stopped) : undefined,
     ])
     // Each repertory ranks the remedies on its own, for an answer section of its own.
     const repertories: RepertoryRanking[] = []
@@ -95,11 +98,12 @@ export class ProductionRetriever implements Retriever {
   }
 
   /** The repertorisation of the case's symptoms. */
-  async #repertorisation(symptoms: readonly string[]): Promise<Repertorisation | undefined> {
+  async #repertorisation(symptoms: readonly string[], signal: AbortSignal): Promise<Repertorisation | undefined> {
     if (!this.#repertory) return undefined
     try {
-      return await this.#repertory.repertorise(symptoms)
+      return await this.#repertory.repertorise(symptoms, { signal })
     } catch (error) {
+      if (signal.aborted) throw error
       // The ranking is only a section of the answer; without it the books still answer.
       console.error('Repertorisation failed; searching without it', error)
       return undefined
