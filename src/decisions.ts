@@ -21,6 +21,12 @@ export const OPPOSITE_CUTOFF = 0.7
 /** d1.2-ultra answers at most 128 questions a request. */
 export const MAX_DECISION_QUESTIONS = 100
 export const DECISION_TIMEOUT_MS = 15_000
+/**
+ * Each attempt to sort a question, three times the slowest of 72 test sorts: the books are not
+ * searched until it answers, and a busy model would otherwise hold the answer up for two full
+ * DECISION_TIMEOUT_MS.
+ */
+export const SORT_TIMEOUT_MS = 3_000
 const LABEL = 'OpenRouter decision'
 
 /** What each kind of question is, for the decision model to choose between. */
@@ -139,7 +145,7 @@ export class DecisionCaseClassifier implements CaseClassifier {
   readonly #decisions: Decisions
 
   constructor(options: DecisionOptions) {
-    this.#decisions = new Decisions(options)
+    this.#decisions = new Decisions({ timeoutMs: SORT_TIMEOUT_MS, ...options })
   }
 
   async classify(text: string, { signal }: Cancellable = {}): Promise<QuestionKind> {

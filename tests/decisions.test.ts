@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   DecisionCaseClassifier,
   DecisionOpposites,
   FALLBACK_DECISION_MODEL,
   KIND_CRITERIA,
+  DECISION_TIMEOUT_MS,
   MAX_DECISION_QUESTIONS,
+  SORT_TIMEOUT_MS,
 } from '../src/decisions.ts'
 import { ProviderError } from '../src/errors.ts'
 import type { Fetch } from '../src/http.ts'
@@ -114,6 +116,19 @@ describe('decision case classifier', () => {
     ['chooses another kind', choice('remedy')],
   ])('takes the question for a case when the decision model %s', async (_, response) => {
     expect(await new DecisionCaseClassifier({ apiKey: 'key', fetch: fakeFetch(response) }).classify('What is Sulphur?')).toBe('case')
+  })
+
+  it('takes the question for a case when sorting it takes too long', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fetch: Fetch = (_url, init) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)))
+
+    const kind = await new DecisionCaseClassifier({ apiKey: 'key', fetch, timeoutMs: 10 }).classify('What is Sulphur?')
+
+    expect(kind).toBe('case')
+    expect(String(logged.mock.calls[0]?.[1])).toMatch(/timed out/)
+    expect(SORT_TIMEOUT_MS).toBeLessThan(DECISION_TIMEOUT_MS)
+    logged.mockRestore()
   })
 
   it('fails once the question is cancelled', async () => {
