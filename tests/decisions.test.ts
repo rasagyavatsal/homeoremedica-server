@@ -100,13 +100,15 @@ describe('decision case classifier', () => {
   it('asks the decision model to choose the kind of the latest question', async () => {
     const fetch = fakeFetch(choice('off-topic'))
 
-    const kind = await new DecisionCaseClassifier({ apiKey: 'key', fetch }).classify('What is 17 times 23?')
+    const kind = await new DecisionCaseClassifier({ apiKey: 'key', fetch }).classify(['What is a remedy?\nTell me.', 'What is 17 times 23?'])
 
     expect(kind).toBe('off-topic')
     expect(fetch.calls[0]?.url).toBe('https://openrouter.ai/api/alpha/decisions')
     expect(fetch.calls[0]?.body).toMatchObject({
       model: 'liquid/d1.2-ultra',
-      state: 'The latest questions a user put to a homoeopathic reference, oldest first: "What is 17 times 23?"',
+      state:
+        'The questions a user put to a homoeopathic reference. Earlier questions, oldest first: ["What is a remedy?\\nTell me."]. ' +
+        'Latest question: "What is 17 times 23?"',
       questions: { q0: { type: 'choice', criteria: KIND_CRITERIA } },
     })
   })
@@ -116,7 +118,7 @@ describe('decision case classifier', () => {
     ['gives no choice', json({ answers: { q0: { type: 'choice' } } })],
     ['chooses another kind', choice('remedy')],
   ])('fails when the decision model %s', async (_, response) => {
-    const error = await new DecisionCaseClassifier({ apiKey: 'key', fetch: fakeFetch(response) }).classify('What is Sulphur?').catch((error: unknown) => error)
+    const error = await new DecisionCaseClassifier({ apiKey: 'key', fetch: fakeFetch(response) }).classify(['What is Sulphur?']).catch((error: unknown) => error)
 
     expect(error).toBeInstanceOf(ProviderError)
     expect(String(error)).not.toContain('provider secret')
@@ -126,7 +128,7 @@ describe('decision case classifier', () => {
     const fetch: Fetch = (_url, init) =>
       new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)))
 
-    await expect(new DecisionCaseClassifier({ apiKey: 'key', fetch, timeoutMs: 10 }).classify('What is Sulphur?')).rejects.toBeInstanceOf(
+    await expect(new DecisionCaseClassifier({ apiKey: 'key', fetch, timeoutMs: 10 }).classify(['What is Sulphur?'])).rejects.toBeInstanceOf(
       ProviderTimeoutError,
     )
     expect(SORT_TIMEOUT_MS).toBeLessThan(DECISION_TIMEOUT_MS)
@@ -140,7 +142,7 @@ describe('decision case classifier', () => {
       return choice('question')
     }
 
-    const error = await new DecisionCaseClassifier({ apiKey: 'key', fetch }).classify('What is Sulphur?', stop).catch((error: unknown) => error)
+    const error = await new DecisionCaseClassifier({ apiKey: 'key', fetch }).classify(['What is Sulphur?'], stop).catch((error: unknown) => error)
 
     expect(error).toBeInstanceOf(ProviderError)
   })

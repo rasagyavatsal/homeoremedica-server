@@ -343,6 +343,24 @@ describe('production retriever with a repertory', () => {
   const names = ({ repertories }: { repertories: readonly { remedies: readonly { remedyName: string }[] }[] }) =>
     repertories.map(({ remedies }) => remedies.map((remedy) => remedy.remedyName))
 
+  it('sorts by the latest message whole and as many earlier ones as fit, cutting the oldest first', async () => {
+    const seen: (readonly string[])[] = []
+    const [first, second, third] = ['a', 'b', 'c'].map((letter) => letter.repeat(4_000))
+    const asked = ChatRequestSchema.parse({
+      message: 'Latest?',
+      history: [first, second, third].flatMap((content) => [
+        { role: 'user', content },
+        { role: 'assistant', content: 'Reply.' },
+      ]),
+    })
+
+    await new ProductionRetriever(searching().corpus, embedder, {
+      repertory: { kind: async (messages) => (seen.push(messages), 'question'), repertorise: vi.fn() },
+    }).retrieve(asked, { limit: 8 })
+
+    expect(seen).toEqual([['b'.repeat(8_000 - 4_000 - 'Latest?'.length), third, 'Latest?']])
+  })
+
   it("searches the books without the repertory's ranking, which has its own section", async () => {
     const { corpus, calls } = searching()
 
@@ -442,7 +460,7 @@ describe('production retriever with a repertory', () => {
 
     await new ProductionRetriever(corpus, embedder, { repertory, rewriter }).retrieve(asked, { limit: 8 })
 
-    expect(seen).toEqual(['A weepy woman.\nWhat is Sulphur?\nShe is thirstless.', ['weepy', 'thirstless']])
+    expect(seen).toEqual([['A weepy woman.', 'What is Sulphur?', 'She is thirstless.'], ['weepy', 'thirstless']])
     expect(searched).toEqual(['A weepy woman.\nShe is thirstless.'])
   })
 

@@ -144,9 +144,11 @@ export class DecisionCaseClassifier implements CaseClassifier {
     this.#decisions = new Decisions({ timeoutMs: SORT_TIMEOUT_MS, ...options })
   }
 
-  async classify(text: string, { signal }: Cancellable = {}): Promise<QuestionKind> {
+  async classify(messages: readonly string[], { signal }: Cancellable = {}): Promise<QuestionKind> {
     const [answer] = await this.#decisions.answer(
-      `The latest questions a user put to a homoeopathic reference, oldest first: ${JSON.stringify(text)}`,
+      // Each message apart, since a message's own line breaks would hide where the latest one starts.
+      `The questions a user put to a homoeopathic reference. Earlier questions, oldest first: ${JSON.stringify(messages.slice(0, -1))}. ` +
+        `Latest question: ${JSON.stringify(messages.at(-1) ?? '')}`,
       [{ type: 'choice', instructions: 'What kind of message is the latest question?', criteria: KIND_CRITERIA }],
       signal,
     )

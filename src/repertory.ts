@@ -81,14 +81,14 @@ export interface Repertorisation {
 }
 
 export interface Repertoriser {
-  /** Whether the text describes a patient, asks about anything else, or is off-topic. */
-  kind(text: string, options?: Cancellable): Promise<QuestionKind>
+  /** Whether the latest of the user's messages, oldest first, describes a patient, asks about anything else, or is off-topic. */
+  kind(messages: readonly string[], options?: Cancellable): Promise<QuestionKind>
   /** Ranks remedies for a case's symptoms. */
   repertorise(symptoms: readonly string[], options?: Cancellable): Promise<Repertorisation>
 }
 
 export interface CaseClassifier {
-  classify(text: string, options?: Cancellable): Promise<QuestionKind>
+  classify(messages: readonly string[], options?: Cancellable): Promise<QuestionKind>
 }
 
 export interface QueriesEmbedder {
@@ -123,8 +123,8 @@ export class Repertory implements Repertoriser {
     this.#opposites = opposites
   }
 
-  kind(text: string, options?: Cancellable): Promise<QuestionKind> {
-    return this.#classifier.classify(text, options)
+  kind(messages: readonly string[], options?: Cancellable): Promise<QuestionKind> {
+    return this.#classifier.classify(messages, options)
   }
 
   async repertorise(symptoms: readonly string[], { signal }: Cancellable = {}): Promise<Repertorisation> {

@@ -105,8 +105,15 @@ export class ProductionRetriever implements Retriever {
   }
 }
 
-/** Every question of the chat, oldest first, as the question is sorted. */
-function questions(request: ChatRequest): string {
+/** The user's messages, oldest first, as the question is sorted: the latest whole, then the earlier ones as far as they fit. */
+function questions(request: ChatRequest): string[] {
   const earlier = request.history.filter((turn) => turn.role === 'user').map((turn) => turn.content)
-  return [...earlier, request.message].join('\n').slice(-MAX_RETRIEVAL_QUERY_CHARS)
+  const kept: string[] = []
+  let room = MAX_RETRIEVAL_QUERY_CHARS - request.message.length
+  for (const message of earlier.toReversed()) {
+    if (room <= 0) break
+    kept.unshift(message.slice(-room))
+    room -= message.length
+  }
+  return [...kept, request.message]
 }
