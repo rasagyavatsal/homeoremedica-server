@@ -7,7 +7,7 @@ export const MAX_RETRIEVAL_QUERY_CHARS = 8_000
 export const MAX_CITATION_TEXT_CHARS = 8_000
 export const MAX_GENERATION_PROMPT_CHARS = 64_000
 export const MAX_GENERATED_ANSWER_CHARS = 12_000
-/** How many symptoms a case is searched by, at most, as the decision model splits them. */
+/** How many symptoms a case is searched by, at most, as the rewrite model splits them. */
 export const MAX_SYMPTOMS = 100
 export const MAX_SYMPTOM_CHARS = 200
 
