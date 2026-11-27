@@ -7,6 +7,60 @@
 * **corpus:** rename the source dataset to `dataset/corpus.json` and consolidate each release into
   one `corpus.sqlite` database with book-filtered retrieval.
 
+## [12.0.0](https://github.com/rasagyavatsal/homeoremedica-server/compare/v11.1.1...v12.0.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove Clarke's clinical ranking
+* POST /api/kind is removed, and POST /api/chat no longer accepts an offTopic field.
+* POST /api/chat no longer accepts a symptoms field.
+* POST /api/chat no longer accepts a diseases field.
+* POST /api/symptoms and POST /api/diseases are removed.
+
+### Features
+
+* answer with OpenRouter models instead of Z.AI ([329d18b](https://github.com/rasagyavatsal/homeoremedica-server/commit/329d18b0b1be42964cb6563ee5c02a0783429b8c))
+* ask d1.2 when d1.2-ultra is at capacity ([78d6ad1](https://github.com/rasagyavatsal/homeoremedica-server/commit/78d6ad11a494d4fbb2fc656961bf5b3d2bd96b92))
+* drop repertory rubrics that state the opposite of their symptom ([b4c4938](https://github.com/rasagyavatsal/homeoremedica-server/commit/b4c4938d4c920353de1520eab020bb4f1136e4c6))
+* give every book its own section in answers ([b825c49](https://github.com/rasagyavatsal/homeoremedica-server/commit/b825c490c4d557d7664ab81772afe8b19a022baa))
+* leave Clarke's clinical ranking out of answers for now ([a5b914c](https://github.com/rasagyavatsal/homeoremedica-server/commit/a5b914cab0f9dc041556ae4b7b3439bd5b608ac1))
+* raise the answer output token limit to 8192 ([18c89a6](https://github.com/rasagyavatsal/homeoremedica-server/commit/18c89a65b727836948f09c43eda77a238edd847c))
+* raise the symptom limit from 15 to 100 ([1aeab7c](https://github.com/rasagyavatsal/homeoremedica-server/commit/1aeab7cff59209ea0e3c064093da75386284ef9a))
+* read each message with the whole conversation before searching ([9bc330c](https://github.com/rasagyavatsal/homeoremedica-server/commit/9bc330cb1a4df58e092233bf3d71016a8251221a))
+* remove diseases from the chat request ([a3394fe](https://github.com/rasagyavatsal/homeoremedica-server/commit/a3394feaf8cea92e560c39745e7f34e3c9779bec))
+* remove symptoms from the chat request ([4d608eb](https://github.com/rasagyavatsal/homeoremedica-server/commit/4d608eb43690e6c9d7ef93403d883d7dc9fab69b))
+* remove the symptoms and diseases endpoints ([c8ae086](https://github.com/rasagyavatsal/homeoremedica-server/commit/c8ae086e5bf706a331bd68ab71de9b20635d83c8))
+* reply with the model to messages the books have nothing on ([2e2e707](https://github.com/rasagyavatsal/homeoremedica-server/commit/2e2e707ebaaef0eeee74a394379e043a2efaf7d1))
+* sort each question once while answering it ([7e166fd](https://github.com/rasagyavatsal/homeoremedica-server/commit/7e166fd001eb77e28aad38cea3cf108d491528b7))
+* sort questions into case, question or off-topic with d1.2-ultra ([3c378e9](https://github.com/rasagyavatsal/homeoremedica-server/commit/3c378e95a24c56e32eca1faf2aa708b542028a93))
+* split cases into symptoms and sort questions without the chat model ([521d36c](https://github.com/rasagyavatsal/homeoremedica-server/commit/521d36c434858a4c083f8911189cd6b486b79c32))
+* tell the Android app the oldest build the API serves ([d9a1fcf](https://github.com/rasagyavatsal/homeoremedica-server/commit/d9a1fcf0f9b1938c32506fd141ac1801ad1b1a12)), closes [#41](https://github.com/rasagyavatsal/homeoremedica-server/issues/41)
+
+
+### Bug Fixes
+
+* ask d1.2-ultra again when it is busy instead of d1.2 ([bd8e432](https://github.com/rasagyavatsal/homeoremedica-server/commit/bd8e432af7b9788f1c37e4c1fa1c107fd310601f))
+* cancel the search when the user stops ([ae94486](https://github.com/rasagyavatsal/homeoremedica-server/commit/ae94486988adcf78ea9224b1474642d4b2212b36))
+* fail the answer when compaction fails ([6129caa](https://github.com/rasagyavatsal/homeoremedica-server/commit/6129caa7b6c593f7fd8048847f6656a41bcae260))
+* fail the answer when sorting or rewriting fails ([2a04360](https://github.com/rasagyavatsal/homeoremedica-server/commit/2a04360e2a00958ec89bcfe6f84ebf5ff079c5cb))
+* fail the answer when the repertory or opposites check fails ([b27ca88](https://github.com/rasagyavatsal/homeoremedica-server/commit/b27ca8855031f0dc257d500bb46f8a5fa34512f2))
+* ignore the symptoms and diseases older Android builds send ([df22221](https://github.com/rasagyavatsal/homeoremedica-server/commit/df2222186cb8f4b622ec125443309376e497d611)), closes [#38](https://github.com/rasagyavatsal/homeoremedica-server/issues/38)
+* let a long answer stream past 60 seconds ([1832bda](https://github.com/rasagyavatsal/homeoremedica-server/commit/1832bda4376fda371dc656bbf73d48a9247ae0e0))
+* say what to do when an answer fails ([fccf307](https://github.com/rasagyavatsal/homeoremedica-server/commit/fccf30750dd139604b2404f807c8e379e9a607c4))
+* show the sort where each message starts ([57cfca9](https://github.com/rasagyavatsal/homeoremedica-server/commit/57cfca9d450b46cbbd5cf2c271eca5f6f8bb026b))
+* stop answers naming a front-runner or noting missing citations ([230cfbf](https://github.com/rasagyavatsal/homeoremedica-server/commit/230cfbf6ed902b017e2af6f9e11b36e4ca9e6469))
+
+
+### Performance Improvements
+
+* give up on sorting a question after 3 seconds ([11f8e89](https://github.com/rasagyavatsal/homeoremedica-server/commit/11f8e898b89d87b413b406a1bf48b45d46359870)), closes [#39](https://github.com/rasagyavatsal/homeoremedica-server/issues/39)
+
+
+### Code Refactoring
+
+* remove Clarke's clinical ranking ([0ed37e7](https://github.com/rasagyavatsal/homeoremedica-server/commit/0ed37e7e05eff9c3f9dcc77bfe4509042c84299a))
+
 ## [11.1.1](https://github.com/rasagyavatsal/homeoremedica-server/compare/v11.1.0...v11.1.1) (2026-11-23)
 
 
