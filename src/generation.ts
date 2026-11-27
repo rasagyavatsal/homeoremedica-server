@@ -10,9 +10,15 @@ import type {
 } from './contracts.ts'
 import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from './errors.ts'
 import { DEFAULT_OPENROUTER_BASE_URL } from './embeddings.ts'
-import { type Fetch, isRecord, readEvents, send } from './http.ts'
+import { type Fetch, idleTimeout, isRecord, readEvents, send } from './http.ts'
 
-export const CHAT_REQUEST_TIMEOUT_MS = 60_000
+/** The longest an answer may take: under Cloud Run's 300-second request limit, so the API reports it. */
+export const CHAT_REQUEST_TIMEOUT_MS = 240_000
+/**
+ * How long an answer may go without sending anything. OpenRouter sends comments while the model
+ * reasons, so a long answer is not cut off while it is still being written.
+ */
+export const CHAT_IDLE_TIMEOUT_MS = 60_000
 
 export const SYSTEM_INSTRUCTION = `You are HomeoRemedica, a reference assistant for historical
 homoeopathic materia medica, used by qualified homoeopathy practitioners whose patients may already
@@ -67,6 +73,7 @@ export class OpenRouterChatClient implements AnswerGenerator {
   readonly #headers: Record<string, string>
   readonly #fetch: Fetch
   readonly #timeoutMs: number
+  readonly #idleTimeoutMs: number
   readonly #reasoningEffort: ReasoningEffort
 
   constructor({
@@ -76,6 +83,7 @@ export class OpenRouterChatClient implements AnswerGenerator {
     baseUrl = DEFAULT_OPENROUTER_BASE_URL,
     fetch: fetchImpl = fetch,
     timeoutMs = CHAT_REQUEST_TIMEOUT_MS,
+    idleTimeoutMs = CHAT_IDLE_TIMEOUT_MS,
     reasoningEffort = 'medium',
   }: {
     apiKey: string | undefined
@@ -84,6 +92,7 @@ export class OpenRouterChatClient implements AnswerGenerator {
     baseUrl?: string
     fetch?: Fetch
     timeoutMs?: number
+    idleTimeoutMs?: number
     reasoningEffort?: ReasoningEffort
   }) {
     if (!apiKey) {
@@ -95,6 +104,7 @@ export class OpenRouterChatClient implements AnswerGenerator {
     this.#headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
     this.#fetch = fetchImpl
     this.#timeoutMs = timeoutMs
+    this.#idleTimeoutMs = idleTimeoutMs
     this.#reasoningEffort = reasoningEffort
   }
 
@@ -111,37 +121,42 @@ export class OpenRouterChatClient implements AnswerGenerator {
       stream: true,
     }
     const label = 'OpenRouter chat'
-    const response = await send(
-      this.#fetch,
-      this.#url,
-      { method: 'POST', headers: this.#headers, body: JSON.stringify(payload) },
-      { label, timeoutMs: this.#timeoutMs, signal },
-    )
-    if (response.status !== 200) {
-      if (response.status === 408 || response.status === 504) {
-        throw new ProviderTimeoutError(`${label} request timed out`)
+    const idle = idleTimeout(this.#idleTimeoutMs)
+    try {
+      const response = await send(
+        this.#fetch,
+        this.#url,
+        { method: 'POST', headers: this.#headers, body: JSON.stringify(payload) },
+        { label, timeoutMs: this.#timeoutMs, signal: signal ? AbortSignal.any([signal, idle.signal]) : idle.signal },
+      )
+      if (response.status !== 200) {
+        if (response.status === 408 || response.status === 504) {
+          throw new ProviderTimeoutError(`${label} request timed out`)
+        }
+        throw new ProviderError(`${label} request failed with status ${response.status}`)
       }
-      throw new ProviderError(`${label} request failed with status ${response.status}`)
-    }
-    let content = ''
-    for await (const event of readEvents(response, label)) {
-      // A provider that fails mid-stream sends an error event, which is not shown.
-      if (isRecord(event) && event.error !== undefined) throw new ProviderError(`${label} stream failed`)
-      const choices = isRecord(event) ? event.choices : undefined
-      if (!Array.isArray(choices)) throw new ProviderError(`${label} returned an unexpected stream event`)
-      // The closing usage event has no choice.
-      if (!choices.length) continue
-      const choice = choices[0]
-      if (!isRecord(choice)) throw new ProviderError(`${label} returned an unexpected stream event`)
-      const text = isRecord(choice.delta) ? choice.delta.content : undefined
-      if (typeof text === 'string' && text) {
-        content += text
-        onText?.(text)
+      let content = ''
+      for await (const event of readEvents(response, label, { onData: idle.touch })) {
+        // A provider that fails mid-stream sends an error event, which is not shown.
+        if (isRecord(event) && event.error !== undefined) throw new ProviderError(`${label} stream failed`)
+        const choices = isRecord(event) ? event.choices : undefined
+        if (!Array.isArray(choices)) throw new ProviderError(`${label} returned an unexpected stream event`)
+        // The closing usage event has no choice.
+        if (!choices.length) continue
+        const choice = choices[0]
+        if (!isRecord(choice)) throw new ProviderError(`${label} returned an unexpected stream event`)
+        const text = isRecord(choice.delta) ? choice.delta.content : undefined
+        if (typeof text === 'string' && text) {
+          content += text
+          onText?.(text)
+        }
+        if (choice.finish_reason === 'length') throw new TokenExhaustionError()
       }
-      if (choice.finish_reason === 'length') throw new TokenExhaustionError()
+      if (!content.trim()) throw new ProviderError(`${label} returned an empty response`)
+      return content
+    } finally {
+      idle.clear()
     }
-    if (!content.trim()) throw new ProviderError(`${label} returned an empty response`)
-    return content
   }
 }
 

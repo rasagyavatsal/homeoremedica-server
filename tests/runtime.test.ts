@@ -8,6 +8,7 @@ import { loadCorpus, loadSettings } from '../src/runtime.ts'
 import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
 import { DEFAULT_OPENROUTER_BASE_URL } from '../src/embeddings.ts'
 import { OpenRouterChatClient } from '../src/generation.ts'
+import type { Fetch } from '../src/http.ts'
 import { fakeFetch, json, sse, stream, timeout } from './fakes.ts'
 
 describe('settings', () => {
@@ -173,6 +174,50 @@ describe('OpenRouter chat client', () => {
     expect(error).toBeInstanceOf(ProviderTimeoutError)
     expect(String(error)).toMatch(/timed out/)
     expect(String(error)).not.toContain('timeout secret')
+  })
+
+  /**
+   * A fetch whose stream sends `chunks` `everyMs` apart, then closes or, without `close`, waits; it
+   * stops with the request's signal, as a real fetch does.
+   */
+  const trickle = (chunks: string[], everyMs: number, close = true): Fetch => async (_url, init) => {
+    const signal = init!.signal!
+    const encoder = new TextEncoder()
+    let timer: ReturnType<typeof setInterval> | undefined
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        signal.addEventListener('abort', () => (clearInterval(timer), controller.error(signal.reason)))
+        timer = setInterval(() => {
+          const chunk = chunks.shift()
+          if (chunk !== undefined) return controller.enqueue(encoder.encode(chunk))
+          clearInterval(timer)
+          if (close) controller.close()
+        }, everyMs)
+      },
+      cancel: () => clearInterval(timer),
+    })
+    return new Response(body, { status: 200 })
+  }
+  const timed = (fetch: Fetch, timeoutMs: number, idleTimeoutMs: number) =>
+    new OpenRouterChatClient({ apiKey: 'openrouter-key', model: 'openai/gpt-6-luna', maxOutputTokens: 4_096, fetch, timeoutMs, idleTimeoutMs })
+  const event = (content: string) => `data: ${JSON.stringify(delta(content))}\n\n`
+
+  it('streams a long answer past the idle limit while anything arrives, comments included', async () => {
+    const fetch = trickle([': OPENROUTER PROCESSING\n\n', ': OPENROUTER PROCESSING\n\n', event('Long '), event('answer.'), 'data: [DONE]\n\n'], 20)
+
+    expect(await timed(fetch, 1_000, 50).generate('prompt', { systemInstruction: 'instruction' })).toBe('Long answer.')
+  })
+
+  it.each([
+    ['nothing arrives for the idle limit', 1_000, 30, false],
+    ['the answer takes longer than the whole limit', 60, 1_000, true],
+  ])('times out when %s', async (_, timeoutMs, idleTimeoutMs, steady) => {
+    const keepAlive = Array.from({ length: 100 }, () => ': OPENROUTER PROCESSING\n\n')
+    const fetch = trickle(steady ? keepAlive : [event('Half')], 10, false)
+
+    await expect(timed(fetch, timeoutMs, idleTimeoutMs).generate('prompt', { systemInstruction: 'instruction' })).rejects.toBeInstanceOf(
+      ProviderTimeoutError,
+    )
   })
 
   it('does not include provider response bodies in errors', async () => {
