@@ -5,17 +5,16 @@ import {
   type ChatRequest,
   MAX_RETRIEVAL_QUERY_CHARS,
   type QuestionKind,
+  type RepertoryRanking,
   type Retrieval,
   type RetrievedSource,
   type Retriever,
 } from './contracts.ts'
-import { type ClinicalMatch, type ClinicalRanker, decisiveMatch, leadingClinicalRemedies } from './clinical.ts'
-import { type Repertorisation, type Repertoriser, decisive, leadingRemedies } from './repertory.ts'
-
-const PREVIOUS_QUESTIONS = 2
+import { REPERTORIES, type Repertoriser, decisive, inRepertory, leadingRemedies } from './repertory.ts'
+import { type MessageRewriter, type Rewrite, unrewritten } from './rewrite.ts'
 
 export interface QueryEmbedder {
-  embedQuery(text: string): Promise<readonly number[]>
+  embedQuery(text: string, options?: Cancellable): Promise<readonly number[]>
 }
 
 export interface SearchableRelease {
@@ -30,98 +29,91 @@ export class ProductionRetriever implements Retriever {
   readonly #corpus: SearchableRelease
   readonly #embedder: QueryEmbedder
   readonly #repertory: Repertoriser | undefined
-  readonly #clinical: ClinicalRanker | undefined
+  readonly #rewriter: MessageRewriter | undefined
 
   /**
-   * The whole corpus is searched. With a repertory, it also ranks remedies for the symptoms of a
-   * question that describes a patient, and with `clinical`, Clarke's remedies for the diseases the
-   * case names are ranked too. The rankings do not reorder the passages: an answer gives each its
-   * own section, and weighing them into the search named their polychrests a second time in place
-   * of the remedies the books found. A ranking that many remedies lead together at a low score is
-   * left out. The leading remedies of each ranking are returned with the passages, and the rubrics
-   * behind the repertories' as further sources.
+   * Every book is searched for passages of its own. With a repertory, the question is sorted by every
+   * question of the chat while the rewriter reads it with the conversation: an off-topic one is not
+   * searched for, one that describes no patient is searched by its rewrite as a standalone query, and
+   * for one that describes a patient the books are searched by the user's own messages about that
+   * patient, and remedies are ranked by its symptoms too, each repertory apart. The rankings do not
+   * reorder the passages: an answer gives each its own section, and weighing them into the search
+   * named their polychrests a second time in place of the remedies the books found. A ranking that
+   * many remedies lead together at a low score is left out. The leading remedies of each ranking are
+   * returned with the passages, and the rubrics behind the repertories' as further sources.
    */
   constructor(
     corpus: SearchableRelease,
     embedder: QueryEmbedder,
-    { repertory, clinical }: { repertory?: Repertoriser | undefined; clinical?: ClinicalRanker | undefined } = {},
+    { repertory, rewriter }: { repertory?: Repertoriser | undefined; rewriter?: MessageRewriter | undefined } = {},
   ) {
     this.#corpus = corpus
     this.#embedder = embedder
     this.#repertory = repertory
-    this.#clinical = clinical
+    this.#rewriter = rewriter
   }
 
-  async retrieve(request: ChatRequest, { limit }: { limit: number }): Promise<Retrieval> {
-    // Earlier questions resolve follow-ups such as "what about its mental symptoms?". Answers are
-    // left out: they are long enough to drown the question in both rankings.
-    const query = searchQuery(request)
-    // The books are searched by the symptoms and diseases a user confirmed, in place of the
-    // question they were read from, so they answer for the case as the user corrected it.
-    const confirmed = [...(request.symptoms ?? []), ...(request.diseases ?? [])]
-    const searched = confirmed.length ? confirmed.join('\n').slice(0, MAX_RETRIEVAL_QUERY_CHARS) : query
-    const [passages, repertorisation, match] = await Promise.all([
-      this.#embedder.embedQuery(searched).then((embedding) => this.#corpus.search(searched, embedding, { limit })),
-      this.#repertorisation(query, request.symptoms),
-      this.#clinicalMatch(query, request.diseases),
+  async retrieve(request: ChatRequest, { limit, signal }: { limit: number } & Cancellable): Promise<Retrieval> {
+    // Stops the requests still running when the question turns out off-topic, a step fails or the user stops.
+    const abandoned = new AbortController()
+    const stopped = signal ? AbortSignal.any([signal, abandoned.signal]) : abandoned.signal
+    try {
+      return await this.#search(request, limit, stopped, abandoned)
+    } catch (error) {
+      abandoned.abort()
+      throw error
+    }
+  }
+
+  async #search(request: ChatRequest, limit: number, stopped: AbortSignal, abandoned: AbortController): Promise<Retrieval> {
+    const rewriting = this.#rewrite(request, stopped)
+    // A rewrite left behind by a failed sort is stopped, not awaited.
+    rewriting.catch(() => {})
+    // Answers are left out of the sort: they are long enough to drown the questions.
+    const kind: QuestionKind = this.#repertory ? await this.#repertory.kind(questions(request), { signal: stopped }) : 'question'
+    if (kind === 'off-topic') {
+      abandoned.abort()
+      return { sources: [], repertories: [] }
+    }
+    const { query, caseMessages, symptoms } = await rewriting
+    // A case is searched in the user's own words, which a rewrite could lose.
+    const caseText = caseMessages.join('\n')
+    const searched = kind === 'case' ? caseText.slice(-MAX_RETRIEVAL_QUERY_CHARS) : query
+    // A case whose symptoms the rewrite could not find in the user's words gets no ranking.
+    const ranking = kind === 'case' && symptoms.length ? this.#repertory : undefined
+    const [passages, repertorisation] = await Promise.all([
+      this.#embedder.embedQuery(searched, { signal: stopped }).then((embedding) => this.#corpus.search(searched, embedding, { limit })),
+      ranking?.repertorise(symptoms, { signal: stopped }),
     ])
-    const { remedies, rubrics } = repertorisation
-      ? leadingRemedies(repertorisation, { firstSource: passages.length + 1 })
-      : { remedies: [], rubrics: [] }
-    return {
-      sources: [...passages, ...rubrics],
-      repertory: remedies,
-      clinical: match ? leadingClinicalRemedies(match) : [],
+    // Each repertory ranks the remedies on its own, for an answer section of its own.
+    const repertories: RepertoryRanking[] = []
+    const rubrics: RetrievedSource[] = []
+    for (const { bookId, title } of repertorisation ? REPERTORIES : []) {
+      const ranked = inRepertory(repertorisation!, bookId)
+      if (!decisive(ranked)) continue
+      const leading = leadingRemedies(ranked, { firstSource: passages.length + rubrics.length + 1 })
+      if (!leading.remedies.length) continue
+      repertories.push({ bookTitle: title, remedies: leading.remedies })
+      rubrics.push(...leading.rubrics)
     }
+    return { sources: [...passages, ...rubrics], repertories }
   }
 
-  async kind(request: ChatRequest, options?: Cancellable): Promise<QuestionKind> {
-    return this.#repertory ? this.#repertory.kind(searchQuery(request), options) : 'question'
-  }
-
-  async symptoms(request: ChatRequest, options?: Cancellable): Promise<string[]> {
-    return this.#repertory ? this.#repertory.symptoms(searchQuery(request), options) : []
-  }
-
-  async diseases(request: ChatRequest, options?: Cancellable): Promise<string[]> {
-    return this.#clinical ? this.#clinical.diseases(searchQuery(request), options) : []
-  }
-
-  /**
-   * Clarke's remedies for the diseases the query names, if they tell remedies apart; for
-   * `diseases` when the user confirmed them.
-   */
-  async #clinicalMatch(query: string, diseases: readonly string[] | undefined): Promise<ClinicalMatch | undefined> {
-    if (!this.#clinical) return undefined
-    try {
-      const match = await this.#clinical.rank(query, diseases)
-      return decisiveMatch(match) ? match : undefined
-    } catch (error) {
-      // Like the repertory's, Clarke's ranking is only a section of the answer.
-      console.error("Matching Clarke's clinical terms failed; searching without them", error)
-      return undefined
-    }
-  }
-
-  /**
-   * The repertorisation of the case the query describes, if it describes one and tells remedies
-   * apart; of `symptoms` when the user confirmed them.
-   */
-  async #repertorisation(query: string, symptoms: readonly string[] | undefined): Promise<Repertorisation | undefined> {
-    if (!this.#repertory) return undefined
-    try {
-      const repertorisation = await this.#repertory.repertorise(query, symptoms)
-      return decisive(repertorisation) ? repertorisation : undefined
-    } catch (error) {
-      // The ranking is only a section of the answer; without it the books still answer.
-      console.error('Repertorisation failed; searching without it', error)
-      return undefined
-    }
+  /** The rewrite of the latest message, or the message as it was sent without a rewriter. */
+  async #rewrite(request: ChatRequest, signal: AbortSignal): Promise<Rewrite> {
+    return this.#rewriter ? this.#rewriter.rewrite(request, { signal }) : unrewritten(request)
   }
 }
 
-/** The question with the ones before it, as the books and the repertories are searched. */
-function searchQuery(request: ChatRequest): string {
-  const questions = request.history.filter((turn) => turn.role === 'user').slice(-PREVIOUS_QUESTIONS)
-  return [...questions.map((turn) => turn.content), request.message].join('\n').slice(-MAX_RETRIEVAL_QUERY_CHARS)
+/** The user's messages, oldest first, as the question is sorted: the latest whole, then the earlier ones as far as they fit. */
+function questions(request: ChatRequest): string[] {
+  const earlier = request.history.filter((turn) => turn.role === 'user').map((turn) => turn.content)
+  const kept: string[] = []
+  let room = MAX_RETRIEVAL_QUERY_CHARS - request.message.length
+  for (const message of earlier.toReversed()) {
+    if (room <= 0) break
+    kept.unshift(message.slice(-room))
+    room -= message.length
+  }
+  return [...kept, request.message]
 }

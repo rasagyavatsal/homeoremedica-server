@@ -2,8 +2,8 @@ export type FailureKind = 'timeout' | 'provider' | 'token_exhaustion' | 'interna
 
 export const FAILURE_DETAILS: Record<FailureKind, string> = {
   timeout: 'The request took too long. Please try again.',
-  provider: 'The chat provider is temporarily unavailable. Please try again shortly.',
-  token_exhaustion: 'Response limit reached. Please try again.',
+  provider: 'HomeoRemedica could not answer just now. Please try again shortly.',
+  token_exhaustion: 'The answer was too long to finish. Try asking about fewer things at once.',
   internal: 'Something went wrong while preparing the answer. Please try again.',
 }
 

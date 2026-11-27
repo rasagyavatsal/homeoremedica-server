@@ -5,36 +5,31 @@ import { join } from 'node:path'
 import { parseEnv } from 'node:util'
 
 import { type Accounts, firebaseAccounts } from './accounts.ts'
-import { Clinical, ClinicalTerms, type DiseaseExtractor, loadClinicalTerms, ModelDiseaseExtractor } from './clinical.ts'
+import { DecisionCaseClassifier, DecisionOpposites, type OppositeCheck } from './decisions.ts'
 import { ConfigurationError } from './errors.ts'
-import { ZaiChatClient } from './generation.ts'
+import { OpenRouterChatClient } from './generation.ts'
 import { ChatService } from './service.ts'
 import { VoyageQueryEmbedder } from './embeddings.ts'
 import { CorpusError, QdrantCorpus } from './qdrant.ts'
 import {
   BOERICKE_COLLECTION,
-  CLASSIFICATION_MAX_OUTPUT_TOKENS,
   type CaseClassifier,
   CombinedRubrics,
-  EXTRACTION_MAX_OUTPUT_TOKENS,
-  ModelCaseClassifier,
-  ModelSymptomExtractor,
   QdrantRubrics,
   REPERTORY_COLLECTION,
   Repertory,
-  type SymptomExtractor,
 } from './repertory.ts'
 import { ProductionRetriever } from './retrieval.ts'
+import { OpenRouterRewriter } from './rewrite.ts'
 
-export const DEFAULT_MODEL = 'glm-5.3-flash'
-export const MAX_OUTPUT_TOKENS = 4_096
+export const DEFAULT_MODEL = 'openai/gpt-6-luna'
+export const MAX_OUTPUT_TOKENS = 8_192
 
 export interface Settings {
   qdrantUrl: string | undefined
   qdrantApiKey: string | undefined
   model: string
   maxOutputTokens: number
-  zaiApiKey: string | undefined
   openrouterApiKey: string | undefined
   /** Accounts are offered only when both Firebase settings are set. */
   firebaseProjectId: string | undefined
@@ -42,6 +37,8 @@ export interface Settings {
   firebaseAuthDomain: string | undefined
   /** Origins of web pages served elsewhere that may call the API. */
   webOrigins: string[]
+  /** The oldest Android versionCode the API still serves; 0 serves every build. */
+  minAndroidVersionCode: number
 }
 
 /**
@@ -62,17 +59,21 @@ export function loadSettings(
   if (!/^\d+$/.test(maxOutputTokens) || +maxOutputTokens < 1 || +maxOutputTokens > MAX_OUTPUT_TOKENS) {
     throw new ConfigurationError(`RAG_MAX_OUTPUT_TOKENS must be an integer from 1 to ${MAX_OUTPUT_TOKENS}`)
   }
+  const minAndroidVersionCode = value('MIN_ANDROID_VERSION_CODE') ?? '0'
+  if (!/^\d{1,10}$/.test(minAndroidVersionCode) || +minAndroidVersionCode > 2_100_000_000) {
+    throw new ConfigurationError('MIN_ANDROID_VERSION_CODE must be an Android versionCode')
+  }
   return {
     qdrantUrl: value('QDRANT_URL'),
     qdrantApiKey: value('QDRANT_API_KEY'),
     model: value('RAG_MODEL') ?? DEFAULT_MODEL,
     maxOutputTokens: Number(maxOutputTokens),
-    zaiApiKey: value('ZAI_API_KEY'),
     openrouterApiKey: value('OPENROUTER_API_KEY'),
     firebaseProjectId: value('FIREBASE_PROJECT_ID'),
     firebaseApiKey: value('FIREBASE_API_KEY'),
     firebaseAuthDomain: value('FIREBASE_AUTH_DOMAIN'),
     webOrigins: (value('WEB_ORIGINS') ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
+    minAndroidVersionCode: Number(minAndroidVersionCode),
   }
 }
 
@@ -88,26 +89,27 @@ function readEnvFile(path: string): Record<string, string> {
 
 export async function buildService(settings: Settings): Promise<ChatService> {
   const embedder = new VoyageQueryEmbedder({ apiKey: settings.openrouterApiKey })
-  const generator = new ZaiChatClient({
-    apiKey: settings.zaiApiKey,
+  const generator = new OpenRouterChatClient({
+    apiKey: settings.openrouterApiKey,
     model: settings.model,
     maxOutputTokens: settings.maxOutputTokens,
   })
   const corpus = loadCorpus(settings)
   await corpus.verify()
   // Every book is searched while Kent's and Boericke's Repertories rank the remedies for the case's
-  // symptoms, and Clarke's Clinical sections those for the diseases it names; each of the three is
-  // a section of the answer of its own.
-  const [repertory, clinical] = await Promise.all([
-    loadRepertory(settings, embedder, { collections: [REPERTORY_COLLECTION, BOERICKE_COLLECTION] }),
-    loadClinical(settings),
-  ])
-  return new ChatService({ retriever: new ProductionRetriever(corpus, embedder, { repertory, clinical }), generator })
+  // symptoms, each a section of the answer of its own.
+  const repertory = await loadRepertory(settings, embedder, {
+    collections: [REPERTORY_COLLECTION, BOERICKE_COLLECTION],
+    opposites: new DecisionOpposites({ apiKey: settings.openrouterApiKey }),
+  })
+  const rewriter = new OpenRouterRewriter({ apiKey: settings.openrouterApiKey })
+  return new ChatService({ retriever: new ProductionRetriever(corpus, embedder, { repertory, rewriter }), generator })
 }
 
 /**
- * Repertorisation with the answer model, checked to have its Qdrant collections. With several
- * collections, each symptom is matched to its nearest rubrics in each.
+ * Repertorisation, sorted by the decision model and checked to have its Qdrant collections. With several
+ * collections, each symptom is matched to its nearest rubrics in each; with `opposites`, less those
+ * that state its opposite.
  */
 export async function loadRepertory(
   settings: Settings,
@@ -115,8 +117,12 @@ export async function loadRepertory(
   {
     collections = [REPERTORY_COLLECTION],
     classifier = caseClassifier(settings),
-    extractor = symptomExtractor(settings),
-  }: { collections?: readonly string[]; classifier?: CaseClassifier; extractor?: SymptomExtractor } = {},
+    opposites,
+  }: {
+    collections?: readonly string[]
+    classifier?: CaseClassifier
+    opposites?: OppositeCheck | undefined
+  } = {},
 ): Promise<Repertory> {
   const { qdrantUrl: url, qdrantApiKey: apiKey } = settings
   if (!url) {
@@ -127,51 +133,12 @@ export async function loadRepertory(
     if (!(await search.exists())) throw new CorpusError(`the Qdrant collection ${collections[index]} does not exist`)
   }
   const rubrics = searches.length === 1 ? searches[0]! : new CombinedRubrics(searches)
-  return new Repertory({ classifier, extractor, embedder, rubrics })
+  return new Repertory({ classifier, embedder, rubrics, opposites })
 }
 
-/** The answer model as it decides whether a question is a case: with little reasoning, so the decision is quick. */
+/** The decision model decides whether a question is a case. */
 export function caseClassifier(settings: Settings): CaseClassifier {
-  return new ModelCaseClassifier(
-    new ZaiChatClient({
-      apiKey: settings.zaiApiKey,
-      model: settings.model,
-      maxOutputTokens: CLASSIFICATION_MAX_OUTPUT_TOKENS,
-      temperature: 0,
-      reasoningEffort: 'low',
-    }),
-  )
-}
-
-export function symptomExtractor(settings: Settings): SymptomExtractor {
-  return new ModelSymptomExtractor(extractionClient(settings))
-}
-
-/** Clarke's clinical terms from Qdrant, matched to the diseases the answer model names. */
-export async function loadClinical(
-  settings: Settings,
-  { extractor = diseaseExtractor(settings) }: { extractor?: DiseaseExtractor } = {},
-): Promise<Clinical> {
-  const { qdrantUrl: url, qdrantApiKey: apiKey } = settings
-  if (!url) {
-    throw new ConfigurationError('a Qdrant URL is required; set QDRANT_URL in the environment or .env')
-  }
-  return new Clinical({ extractor, terms: new ClinicalTerms(await loadClinicalTerms({ url, apiKey })) })
-}
-
-export function diseaseExtractor(settings: Settings): DiseaseExtractor {
-  return new ModelDiseaseExtractor(extractionClient(settings))
-}
-
-/** The answer model as symptom and disease extraction ask it: reasoning as much as it can, and as steady as it goes. */
-function extractionClient(settings: Settings): ZaiChatClient {
-  return new ZaiChatClient({
-    apiKey: settings.zaiApiKey,
-    model: settings.model,
-    maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
-    temperature: 0,
-    reasoningEffort: 'max',
-  })
+  return new DecisionCaseClassifier({ apiKey: settings.openrouterApiKey })
 }
 
 export function loadCorpus(settings: Settings): QdrantCorpus {

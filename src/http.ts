@@ -4,6 +4,14 @@ import { ProviderError, ProviderTimeoutError, isTimeout } from './errors.ts'
 
 export type Fetch = typeof fetch
 
+/** Statuses of a busy or failing provider, asked again a little later up to MAX_ATTEMPTS times in all. */
+export const RETRYABLE_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504])
+export const MAX_ATTEMPTS = 3
+/** The wait before the second attempt, doubled before each one after it. */
+export const INITIAL_BACKOFF_MS = 1_000
+
+export const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
 export async function send(
   fetchImpl: Fetch,
   url: string,
@@ -28,8 +36,23 @@ export async function readJson(response: Response, label: string): Promise<unkno
   }
 }
 
-/** Yield each JSON `data:` payload of a server-sent event stream until `[DONE]`. */
-export async function* readEvents(response: Response, label: string): AsyncGenerator<unknown> {
+/** A signal that aborts as a timeout once `ms` pass without a call to `touch`; `clear` stops it. */
+export function idleTimeout(ms: number): { signal: AbortSignal; touch: () => void; clear: () => void } {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const touch = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => controller.abort(new DOMException('no data in time', 'TimeoutError')), ms)
+  }
+  touch()
+  return { signal: controller.signal, touch, clear: () => clearTimeout(timer) }
+}
+
+/**
+ * Yield each JSON `data:` payload of a server-sent event stream until `[DONE]`. `onData` hears of
+ * every chunk that arrives, comments included.
+ */
+export async function* readEvents(response: Response, label: string, { onData }: { onData?: () => void } = {}): AsyncGenerator<unknown> {
   if (!response.body) throw new ProviderError(`${label} returned an empty stream`)
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
   let buffer = ''
@@ -42,6 +65,7 @@ export async function* readEvents(response: Response, label: string): AsyncGener
         if (isTimeout(error)) throw new ProviderTimeoutError(`${label} request timed out`)
         throw new ProviderError(`${label} stream failed`)
       }
+      onData?.()
       const lines = (buffer + (chunk.value ?? '')).split(/\r?\n/)
       // Keep a partial last line for the next chunk.
       buffer = chunk.done ? '' : (lines.pop() ?? '')

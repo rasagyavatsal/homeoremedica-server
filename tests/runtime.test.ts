@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { loadCorpus, loadSettings } from '../src/runtime.ts'
 import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
-import { DEFAULT_ZAI_BASE_URL, ZaiChatClient } from '../src/generation.ts'
+import { DEFAULT_OPENROUTER_BASE_URL } from '../src/embeddings.ts'
+import { OpenRouterChatClient } from '../src/generation.ts'
+import type { Fetch } from '../src/http.ts'
 import { fakeFetch, json, sse, stream, timeout } from './fakes.ts'
 
 describe('settings', () => {
@@ -20,35 +22,35 @@ describe('settings', () => {
     rmSync(directory, { recursive: true, force: true })
   })
 
-  it('defaults to GLM flash and reads provider keys', () => {
+  it('defaults to GPT-6 Luna and reads provider keys', () => {
     const settings = loadSettings(
-      { ZAI_API_KEY: 'zai-key', QDRANT_URL: 'https://qdrant.example', QDRANT_API_KEY: 'qdrant-key' },
+      { OPENROUTER_API_KEY: 'openrouter-key', QDRANT_URL: 'https://qdrant.example', QDRANT_API_KEY: 'qdrant-key' },
       directory,
     )
 
     expect(settings).toEqual({
       qdrantUrl: 'https://qdrant.example',
       qdrantApiKey: 'qdrant-key',
-      model: 'glm-5.3-flash',
-      maxOutputTokens: 4_096,
-      zaiApiKey: 'zai-key',
-      openrouterApiKey: undefined,
+      model: 'openai/gpt-6-luna',
+      maxOutputTokens: 8_192,
+      openrouterApiKey: 'openrouter-key',
       firebaseProjectId: undefined,
       firebaseApiKey: undefined,
       firebaseAuthDomain: undefined,
       webOrigins: [],
+      minAndroidVersionCode: 0,
     })
   })
 
   it('prefers the environment, then .env.local, then .env', () => {
-    writeFileSync(join(directory, '.env'), 'RAG_MODEL=from-env-file\nZAI_API_KEY=file-key\nQDRANT_URL=\n')
+    writeFileSync(join(directory, '.env'), 'RAG_MODEL=from-env-file\nOPENROUTER_API_KEY=file-key\nQDRANT_URL=\n')
     writeFileSync(join(directory, '.env.local'), 'export RAG_MODEL="from-local"\nRAG_MAX_OUTPUT_TOKENS=1024\n')
 
-    const settings = loadSettings({ ZAI_API_KEY: 'env-key' }, directory)
+    const settings = loadSettings({ OPENROUTER_API_KEY: 'env-key' }, directory)
 
     expect(settings.model).toBe('from-local')
     expect(settings.maxOutputTokens).toBe(1_024)
-    expect(settings.zaiApiKey).toBe('env-key')
+    expect(settings.openrouterApiKey).toBe('env-key')
     expect(settings.qdrantUrl).toBeUndefined()
   })
 
@@ -58,7 +60,14 @@ describe('settings', () => {
     expect(settings.webOrigins).toEqual(['https://homeoremedica.com', 'https://homeoremedica.web.app'])
   })
 
-  it.each(['0', '4097', 'many', '12.5'])('rejects RAG_MAX_OUTPUT_TOKENS=%s', (value) => {
+  it('reads the oldest Android build the API serves', () => {
+    expect(loadSettings({ MIN_ANDROID_VERSION_CODE: '42' }, directory).minAndroidVersionCode).toBe(42)
+    for (const code of ['-1', '4.2', 'latest', '9999999999']) {
+      expect(() => loadSettings({ MIN_ANDROID_VERSION_CODE: code }, directory)).toThrow(/MIN_ANDROID_VERSION_CODE/)
+    }
+  })
+
+  it.each(['0', '8193', 'many', '12.5'])('rejects RAG_MAX_OUTPUT_TOKENS=%s', (value) => {
     expect(() => loadSettings({ RAG_MAX_OUTPUT_TOKENS: value }, directory)).toThrow(ConfigurationError)
   })
 
@@ -67,15 +76,15 @@ describe('settings', () => {
   })
 })
 
-describe('Z.AI chat client', () => {
+describe('OpenRouter chat client', () => {
   const client = (fetch: ReturnType<typeof fakeFetch>) =>
-    new ZaiChatClient({ apiKey: 'zai-key', model: 'glm-5.3-flash', maxOutputTokens: 4_096, fetch })
+    new OpenRouterChatClient({ apiKey: 'openrouter-key', model: 'openai/gpt-6-luna', maxOutputTokens: 4_096, fetch })
 
   const delta = (content: string, extra: Record<string, unknown> = {}) => ({ choices: [{ delta: { content }, ...extra }] })
 
-  it('streams an OpenAI-compatible chat request', async () => {
+  it('streams a chat request with hidden reasoning', async () => {
     const fetch = fakeFetch(
-      sse({ choices: [{ delta: { reasoning_content: 'Thinking.' } }] }, delta('Grounded '), delta('answer.', { finish_reason: 'stop' })),
+      sse(delta('Grounded '), delta('answer.', { finish_reason: 'stop' }), { choices: [], usage: { cost: 0.001 } }),
     )
     const pieces: string[] = []
 
@@ -88,18 +97,16 @@ describe('Z.AI chat client', () => {
     expect(pieces).toEqual(['Grounded ', 'answer.'])
     expect(fetch.calls).toEqual([
       {
-        url: `${DEFAULT_ZAI_BASE_URL}/chat/completions`,
+        url: `${DEFAULT_OPENROUTER_BASE_URL}/chat/completions`,
         method: 'POST',
-        headers: { Authorization: 'Bearer zai-key', 'Content-Type': 'application/json' },
+        headers: { Authorization: 'Bearer openrouter-key', 'Content-Type': 'application/json' },
         body: {
-          model: 'glm-5.3-flash',
+          model: 'openai/gpt-6-luna',
           messages: [
             { role: 'system', content: 'Use citations.' },
             { role: 'user', content: 'Retrieved evidence' },
           ],
-          thinking: { type: 'enabled' },
-          reasoning_effort: 'high',
-          temperature: 1.0,
+          reasoning: { effort: 'medium', exclude: true },
           max_tokens: 4_096,
           stream: true,
         },
@@ -109,18 +116,17 @@ describe('Z.AI chat client', () => {
 
   it('reasons as little as it is asked to', async () => {
     const fetch = fakeFetch(sse(delta('Head: pain', { finish_reason: 'stop' })))
-    const steady = new ZaiChatClient({
-      apiKey: 'zai-key',
-      model: 'glm-5.3-flash',
+    const quick = new OpenRouterChatClient({
+      apiKey: 'openrouter-key',
+      model: 'openai/gpt-6-luna',
       maxOutputTokens: 4_096,
-      temperature: 0,
       reasoningEffort: 'low',
       fetch,
     })
 
-    await steady.generate('prompt', { systemInstruction: 'instruction' })
+    await quick.generate('prompt', { systemInstruction: 'instruction' })
 
-    expect(fetch.calls[0]?.body).toMatchObject({ thinking: { type: 'enabled' }, reasoning_effort: 'low', temperature: 0 })
+    expect(fetch.calls[0]?.body).toMatchObject({ reasoning: { effort: 'low', exclude: true } })
   })
 
   it.each(['', 'The patient is bruised and sore, especially after an injury.'])(
@@ -143,6 +149,8 @@ describe('Z.AI chat client', () => {
   it.each([
     sse({ choices: [] }),
     sse({ error: { message: 'provider secret' } }),
+    sse(delta('Half an answer'), { error: { message: 'provider secret' }, choices: [{ delta: { content: '' }, finish_reason: 'error' }] }),
+    sse({ choices: 'none' }),
     sse(delta('  ')),
     stream('data: not json\n\n'),
     new Response(null, { status: 200 }),
@@ -154,8 +162,8 @@ describe('Z.AI chat client', () => {
 
   it('requires a key', () => {
     expect(
-      () => new ZaiChatClient({ apiKey: undefined, model: 'glm-5.3-flash', maxOutputTokens: 4_096 }),
-    ).toThrow(/ZAI_API_KEY/)
+      () => new OpenRouterChatClient({ apiKey: undefined, model: 'openai/gpt-6-luna', maxOutputTokens: 4_096 }),
+    ).toThrow(/OPENROUTER_API_KEY/)
   })
 
   it.each([timeout(), json({}, 504)])('classifies timeouts without exposing details', async (response) => {
@@ -166,6 +174,50 @@ describe('Z.AI chat client', () => {
     expect(error).toBeInstanceOf(ProviderTimeoutError)
     expect(String(error)).toMatch(/timed out/)
     expect(String(error)).not.toContain('timeout secret')
+  })
+
+  /**
+   * A fetch whose stream sends `chunks` `everyMs` apart, then closes or, without `close`, waits; it
+   * stops with the request's signal, as a real fetch does.
+   */
+  const trickle = (chunks: string[], everyMs: number, close = true): Fetch => async (_url, init) => {
+    const signal = init!.signal!
+    const encoder = new TextEncoder()
+    let timer: ReturnType<typeof setInterval> | undefined
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        signal.addEventListener('abort', () => (clearInterval(timer), controller.error(signal.reason)))
+        timer = setInterval(() => {
+          const chunk = chunks.shift()
+          if (chunk !== undefined) return controller.enqueue(encoder.encode(chunk))
+          clearInterval(timer)
+          if (close) controller.close()
+        }, everyMs)
+      },
+      cancel: () => clearInterval(timer),
+    })
+    return new Response(body, { status: 200 })
+  }
+  const timed = (fetch: Fetch, timeoutMs: number, idleTimeoutMs: number) =>
+    new OpenRouterChatClient({ apiKey: 'openrouter-key', model: 'openai/gpt-6-luna', maxOutputTokens: 4_096, fetch, timeoutMs, idleTimeoutMs })
+  const event = (content: string) => `data: ${JSON.stringify(delta(content))}\n\n`
+
+  it('streams a long answer past the idle limit while anything arrives, comments included', async () => {
+    const fetch = trickle([': OPENROUTER PROCESSING\n\n', ': OPENROUTER PROCESSING\n\n', event('Long '), event('answer.'), 'data: [DONE]\n\n'], 20)
+
+    expect(await timed(fetch, 1_000, 50).generate('prompt', { systemInstruction: 'instruction' })).toBe('Long answer.')
+  })
+
+  it.each([
+    ['nothing arrives for the idle limit', 1_000, 30, false],
+    ['the answer takes longer than the whole limit', 60, 1_000, true],
+  ])('times out when %s', async (_, timeoutMs, idleTimeoutMs, steady) => {
+    const keepAlive = Array.from({ length: 100 }, () => ': OPENROUTER PROCESSING\n\n')
+    const fetch = trickle(steady ? keepAlive : [event('Half')], 10, false)
+
+    await expect(timed(fetch, timeoutMs, idleTimeoutMs).generate('prompt', { systemInstruction: 'instruction' })).rejects.toBeInstanceOf(
+      ProviderTimeoutError,
+    )
   })
 
   it('does not include provider response bodies in errors', async () => {

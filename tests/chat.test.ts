@@ -6,38 +6,26 @@ import {
   type ChatRequest,
   ChatRequestSchema,
   type GenerateOptions,
-  type QuestionKind,
   type Retrieval,
   type Retriever,
 } from '../src/contracts.ts'
 import { ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
-import { COMPACTION_INSTRUCTION } from '../src/generation.ts'
+import { COMPACTION_INSTRUCTION, REPLY_INSTRUCTION, SYSTEM_INSTRUCTION } from '../src/generation.ts'
 import { ChatService } from '../src/service.ts'
 
 const request = (input: Record<string, unknown>): ChatRequest => ChatRequestSchema.parse(input)
 
 class StubRetriever implements Retriever {
   searchCall: { request: ChatRequest; limit: number } | null = null
+  signal: AbortSignal | undefined
   failure: unknown = null
 
-  async kind(): Promise<QuestionKind> {
-    return 'case'
-  }
-
-  async symptoms(): Promise<string[]> {
-    return ['Mind: irritable']
-  }
-
-  async diseases(): Promise<string[]> {
-    return ['sciatica']
-  }
-
-  async retrieve(request: ChatRequest, { limit }: { limit: number }): Promise<Retrieval> {
+  async retrieve(request: ChatRequest, { limit, signal }: { limit: number; signal?: AbortSignal | undefined }): Promise<Retrieval> {
     this.searchCall = { request, limit }
+    this.signal = signal
     if (this.failure) throw this.failure
     return {
-      repertory: [],
-      clinical: [],
+      repertories: [],
       sources: [
         {
         chunkId: 'chk_1',
@@ -56,16 +44,17 @@ class StubRetriever implements Retriever {
 }
 
 class StubGenerator implements AnswerGenerator {
-  readonly model = 'glm-5.3-flash'
+  readonly model = 'openai/gpt-6-luna'
   generationPrompt: string | null = null
+  systemInstruction: string | null = null
   signal: AbortSignal | undefined
   failure: unknown = null
   pieces = ['Kent describes irritability ', 'and oversensitivity [1].']
 
   async generate(prompt: string, { systemInstruction, onText, signal }: GenerateOptions): Promise<string> {
     this.generationPrompt = prompt
+    this.systemInstruction = systemInstruction
     this.signal = signal
-    expect(systemInstruction).toContain('medical advice')
     if (this.failure) throw this.failure
     for (const piece of this.pieces) onText?.(piece)
     return this.pieces.join('')
@@ -83,13 +72,14 @@ it('grounds a conversation-aware answer in versioned sources', async () => {
 
   const response = await service.chat(chatRequest)
 
-  expect(retriever.searchCall).toEqual({ request: chatRequest, limit: 5 })
+  expect(retriever.searchCall).toEqual({ request: chatRequest, limit: 2 })
+  expect(generator.systemInstruction).toBe(SYSTEM_INSTRUCTION)
   expect(generator.generationPrompt).toContain("[1] Kent's Lectures — NUX VOMICA — MIND")
   expect(generator.generationPrompt).toContain('untrusted user-provided context')
   expect(generator.generationPrompt).toContain('untrusted reference data')
   expect(response.answer).toBe('Kent describes irritability and oversensitivity [1].')
   expect(response.corpusVersion).toBe('homeoremedica')
-  expect(response.model).toBe('glm-5.3-flash')
+  expect(response.model).toBe('openai/gpt-6-luna')
   expect(response.sources[0]?.id).toBe('homeoremedica/kent_lectures/chk_1')
 })
 
@@ -126,18 +116,22 @@ it('gives the model the rankings with the rubrics they point to, and cites the r
         score: 0,
       },
     ],
-    repertory: [
-      { remedyName: 'Nux vomica', matched: [{ text: 'Mind: irritable', source: 2 }, { text: 'Sleep: waking at 3 a.m.' }] },
+    repertories: [
+      {
+        bookTitle: 'Kent, Repertory of the Homoeopathic Materia Medica',
+        remedies: [
+          { remedyName: 'Nux vomica', matched: [{ text: 'Mind: irritable', source: 2 }, { text: 'Sleep: waking at 3 a.m.' }] },
+        ],
+      },
     ],
-    clinical: [{ remedyName: 'Colocynthis', matched: [{ text: 'sciatica' }] }],
   })
   const generator = new StubGenerator()
 
   const response = await new ChatService({ retriever, generator }).chat(request({ message: 'An irritable man with sciatica.' }))
 
   expect(generator.generationPrompt).toContain(
-    '<repertory_ranking>\n1. Nux vomica: Mind: irritable [2]; Sleep: waking at 3 a.m.\n</repertory_ranking>\n' +
-      '<clinical_ranking>\n1. Colocynthis: sciatica\n</clinical_ranking>\n',
+    '<repertory_ranking book="Kent, Repertory of the Homoeopathic Materia Medica">\n' +
+      '1. Nux vomica: Mind: irritable [2]; Sleep: waking at 3 a.m.\n</repertory_ranking>\n',
   )
   expect(generator.generationPrompt).toContain(
     '[2] Kent, Repertory of the Homoeopathic Materia Medica — Mind: irritability\nRemedies and their grades: Nux vomica (3)',
@@ -200,6 +194,16 @@ it('leaves a retrieval failure for the caller to classify', async () => {
   ).rejects.toBe(retriever.failure)
 })
 
+it('stops the search when the user stops', async () => {
+  const retriever = new StubRetriever()
+  const stop = new AbortController()
+
+  await new ChatService({ retriever, generator: new StubGenerator() }).chat(request({ message: 'question' }), { signal: stop.signal })
+  stop.abort()
+
+  expect(retriever.signal?.aborted).toBe(true)
+})
+
 it.each([new ProviderError('provider secret'), new TokenExhaustionError()])(
   'leaves an answer failure for the caller to classify (%s)',
   async (cause) => {
@@ -224,42 +228,24 @@ it('rejects oversized citation text before generating an answer', async () => {
   expect(generator.generationPrompt).toBeNull()
 })
 
-it('answers without the model when retrieval finds no sources', async () => {
+it('replies to a message the books have nothing on from the message alone', async () => {
   const retriever = new StubRetriever()
-  retriever.retrieve = async () => ({ sources: [], repertory: [], clinical: [] })
+  retriever.retrieve = async () => ({ sources: [], repertories: [] })
   const generator = new StubGenerator()
+  generator.pieces = ["You're welcome! ", 'Ask about a remedy, a symptom or a case.']
 
   const streamed: string[] = []
 
-  const response = await new ChatService({ retriever, generator }).chat(request({ message: 'question' }), {
-    onText: (text) => streamed.push(text),
-  })
-
-  expect(generator.generationPrompt).toBeNull()
-  expect(response.answer).toBe("That isn't something the books cover. Ask about a remedy, a symptom or a case.")
-  expect(streamed).toEqual([response.answer])
-  expect(response.sources).toEqual([])
-})
-
-it('answers an off-topic question without searching or the model', async () => {
-  const retriever = new StubRetriever()
-  const generator = new StubGenerator()
-  const sources: unknown[] = []
-
   const response = await new ChatService({ retriever, generator }).chat(
-    request({ message: 'What is the capital of France?', offTopic: true }),
-    { onSources: (citations) => sources.push(citations) },
+    request({ message: 'Thanks, that was helpful!', history: [{ role: 'user', content: 'Tell me about Sepia.' }] }),
+    { onText: (text) => streamed.push(text) },
   )
 
-  expect(retriever.searchCall).toBeNull()
-  expect(generator.generationPrompt).toBeNull()
-  expect(response.answer).toBe("That isn't something the books cover. Ask about a remedy, a symptom or a case.")
+  expect(generator.systemInstruction).toBe(REPLY_INSTRUCTION)
+  expect(generator.generationPrompt).toBe('<latest_user_message>Thanks, that was helpful!</latest_user_message>')
+  expect(response.answer).toBe("You're welcome! Ask about a remedy, a symptom or a case.")
+  expect(streamed).toEqual(generator.pieces)
   expect(response.sources).toEqual([])
-  expect(sources).toEqual([[]])
-})
-
-it('rejects an offTopic that is not a boolean', () => {
-  expect(() => request({ message: 'question', offTopic: 'yes' })).toThrow(/offTopic must be a boolean/)
 })
 
 it('rejects an oversized history budget', () => {
@@ -296,7 +282,7 @@ describe('compaction', () => {
   function summarizer(summary: string | Error) {
     const calls: { prompt: string; systemInstruction: string }[] = []
     const generator: AnswerGenerator = {
-      model: 'glm-5.3-flash',
+      model: 'openai/gpt-6-luna',
       async generate(prompt, { systemInstruction }) {
         calls.push({ prompt, systemInstruction })
         if (summary instanceof Error) throw summary
@@ -346,7 +332,7 @@ describe('compaction', () => {
     const signals: (AbortSignal | undefined)[] = []
     const retriever = new StubRetriever()
     const generator: AnswerGenerator = {
-      model: 'glm-5.3-flash',
+      model: 'openai/gpt-6-luna',
       async generate(prompt, { systemInstruction, signal }) {
         prompts.push(prompt)
         signals.push(signal)
@@ -392,17 +378,34 @@ describe('compaction', () => {
     expect(signals[0]?.aborted).toBe(true)
   })
 
-  it('answers from the whole context when condensing fails', async () => {
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const { prompts, service } = answering(new ProviderTimeoutError('provider secret'))
+  it('fails without answering when condensing fails', async () => {
+    const cause = new ProviderTimeoutError('provider secret')
+    const { prompts, service } = answering(cause)
 
-    const response = await service.chat(request({ message: 'And Sepia?', history: long(16) }))
+    await expect(service.chat(request({ message: 'And Sepia?', history: long(16) }))).rejects.toBe(cause)
 
-    expect(response.answer).toBe('Answer [1].')
-    expect(response.compacted).toBeUndefined()
-    expect(prompts[1]).toContain('<user>turn 0</user>')
-    expect(logged).toHaveBeenCalledOnce()
-    logged.mockRestore()
+    expect(prompts).toHaveLength(1)
+  })
+
+  it('stops the search when condensing fails, and fails with the compaction error', async () => {
+    const cause = new ProviderTimeoutError('provider secret')
+    const generator: AnswerGenerator = {
+      model: 'openai/gpt-6-luna',
+      generate: async () => {
+        throw cause
+      },
+    }
+    let stopped: AbortSignal | undefined
+    const retriever: Retriever = {
+      retrieve: (_request, { signal }) =>
+        new Promise<never>((_resolve, reject) => {
+          stopped = signal
+          signal?.addEventListener('abort', () => reject(new ProviderError('search stopped')))
+        }),
+    }
+
+    await expect(new ChatService({ retriever, generator }).chat(request({ message: 'And Sepia?', history: long(16) }))).rejects.toBe(cause)
+    expect(stopped?.aborted).toBe(true)
   })
 })
 
@@ -410,72 +413,14 @@ it('rejects book filters', () => {
   expect(() => request({ message: 'question', bookIds: ['kent_lectures'] })).toThrow(/unexpected request field/)
 })
 
-it('answers by the symptoms and diseases a user confirmed and searches the books by them', async () => {
-  const retriever = new StubRetriever()
-  const generator = new StubGenerator()
-  const asked = { message: 'A weepy, thirsty woman.', symptoms: ['Mind: weeping', 'Stomach: thirstless'] }
-
-  await new ChatService({ retriever, generator }).chat(request(asked))
-
-  expect(generator.generationPrompt).toContain('<confirmed_symptoms>\nMind: weeping\nStomach: thirstless\n</confirmed_symptoms>')
-  expect(generator.generationPrompt).toContain('go by this list')
-  expect(generator.generationPrompt).not.toContain('confirmed_diseases')
-  await new ChatService({ retriever, generator }).chat(request({ ...asked, diseases: ['asthma', 'eczema'] }))
-  expect(generator.generationPrompt).toContain('</confirmed_symptoms>\n\nThe user checked the diseases of the case')
-  expect(generator.generationPrompt).toContain('<confirmed_diseases>\nasthma\neczema\n</confirmed_diseases>')
-  await new ChatService({ retriever, generator }).chat(request({ ...asked, diseases: [] }))
-  expect(generator.generationPrompt).not.toContain('confirmed_diseases')
-  expect(generator.generationPrompt).toContain('confirmed none. Do not answer for any disease')
-  await new ChatService({ retriever, generator }).chat(request({ message: 'What is Sulphur?', symptoms: [] }))
-  expect(generator.generationPrompt).not.toContain('confirmed_')
-  expect(generator.generationPrompt).not.toContain('confirmed none')
-
-  const searched: string[] = []
-  const corpus: SearchableRelease = { search: async (query) => (searched.push(query), []) }
-  const embedder = { embedQuery: async (text: string) => (searched.push(text), [1.0]) }
-  const retrieve = (question: Parameters<typeof request>[0]) => new ProductionRetriever(corpus, embedder).retrieve(request(question), { limit: 8 })
-
-  // The confirmed lists stand in for the question they were read from.
-  await retrieve({ ...asked, diseases: ['asthma'] })
-  const confirmed = 'Mind: weeping\nStomach: thirstless\nasthma'
-  expect(searched).toEqual([confirmed, confirmed])
-
-  // With nothing confirmed, the books are searched by the question.
-  searched.length = 0
-  await retrieve({ message: 'She is unwell.', symptoms: [], diseases: [] })
-  await retrieve({ message: 'What is Sulphur?' })
-  expect(searched).toEqual(['She is unwell.', 'She is unwell.', 'What is Sulphur?', 'What is Sulphur?'])
+it('drops confirmed symptoms and diseases', () => {
+  expect(request({ message: 'A weepy woman.', symptoms: ['Mind: weeping'], diseases: ['asthma'] })).toEqual({
+    message: 'A weepy woman.',
+    history: [],
+  })
 })
 
-it('production retriever searches on recent questions only', async () => {
-  let embedded: string | null = null
-  const corpus: SearchableRelease = { search: async () => [] }
-  const embedder = {
-    async embedQuery(text: string) {
-      embedded = text
-      return [1.0, 0.0]
-    },
-  }
-
-  await new ProductionRetriever(corpus, embedder).retrieve(
-    request({
-      message: 'And its mental symptoms?',
-      history: [
-        { role: 'user', content: 'Tell me about Nux vomica.' },
-        { role: 'assistant', content: 'Nux vomica suits irritable patients [1].' },
-        { role: 'user', content: 'What about Sepia?' },
-        { role: 'assistant', content: 'Sepia is indifferent to loved ones [2].' },
-        { role: 'user', content: 'Compare it with Pulsatilla.' },
-        { role: 'assistant', content: 'Pulsatilla is mild and weepy [3].' },
-      ],
-    }),
-    { limit: 8 },
-  )
-
-  expect(embedded).toBe('What about Sepia?\nCompare it with Pulsatilla.\nAnd its mental symptoms?')
-})
-
-it('production retriever embeds the conversation', async () => {
+it('production retriever searches a question by its rewrite', async () => {
   let searchCall: unknown[] | null = null
   const corpus: SearchableRelease = {
     async search(query, embedding, { limit }) {
@@ -490,8 +435,9 @@ it('production retriever embeds the conversation', async () => {
       return [1.0, 0.0]
     },
   }
+  const rewriter = { rewrite: async () => ({ query: 'Nux vomica irritability', caseMessages: ['What about irritability?'], symptoms: [] }) }
 
-  await new ProductionRetriever(corpus, embedder).retrieve(
+  await new ProductionRetriever(corpus, embedder, { rewriter }).retrieve(
     request({
       message: 'What about irritability?',
       history: [{ role: 'user', content: 'Tell me about Nux vomica.' }],
@@ -499,9 +445,26 @@ it('production retriever embeds the conversation', async () => {
     { limit: 8 },
   )
 
-  const query = 'Tell me about Nux vomica.\nWhat about irritability?'
-  expect(embedded).toBe(query)
-  expect(searchCall).toEqual([query, [1.0, 0.0], 8])
+  expect(embedded).toBe('Nux vomica irritability')
+  expect(searchCall).toEqual(['Nux vomica irritability', [1.0, 0.0], 8])
+})
+
+it('production retriever fails without searching when the rewrite fails', async () => {
+  const cause = new ProviderTimeoutError('OpenRouter rewrite request timed out')
+  const embedQuery = vi.fn()
+  const rewriter = {
+    rewrite: async (): Promise<never> => {
+      throw cause
+    },
+  }
+
+  await expect(
+    new ProductionRetriever({ search: async () => [] }, { embedQuery }, { rewriter }).retrieve(
+      request({ message: 'And its mental symptoms?', history: [{ role: 'user', content: 'Tell me about Nux vomica.' }] }),
+      { limit: 8 },
+    ),
+  ).rejects.toBe(cause)
+  expect(embedQuery).not.toHaveBeenCalled()
 })
 
 it('production retriever leaves an embedding failure for the caller to classify', async () => {

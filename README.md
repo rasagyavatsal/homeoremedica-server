@@ -13,7 +13,7 @@ collections come from [homeoremedica-private](https://github.com/rasagyavatsal/h
 ## Setup
 
 Requires Node.js 22.18+ (24 recommended), a Qdrant 1.15.2+ cluster with the seven book collections, and
-OpenRouter and Z.AI API keys.
+an OpenRouter API key.
 
 ```sh
 npm ci
@@ -25,14 +25,14 @@ gcloud auth application-default login     # only for saved chats locally (Firest
 | --- | --- | --- |
 | `QDRANT_URL` | Required for chat | Qdrant cluster URL. |
 | `QDRANT_API_KEY` | None | Qdrant API key; Qdrant Cloud requires it. |
-| `OPENROUTER_API_KEY` | Required for chat | Query embeddings (`voyageai/voyage-4`). |
-| `ZAI_API_KEY` | Required for chat | Answer generation. |
-| `RAG_MODEL` | `glm-5.3-flash` | Answer model. |
-| `RAG_MAX_OUTPUT_TOKENS` | `4096` | Output token limit, 1 to 4096. |
+| `OPENROUTER_API_KEY` | Required for chat | Embeddings, answers and the models that prepare a search. |
+| `RAG_MODEL` | `openai/gpt-6-luna` | OpenRouter answer model. |
+| `RAG_MAX_OUTPUT_TOKENS` | `8192` | Output token limit, 1 to 8192. |
 | `FIREBASE_PROJECT_ID` | None | With `FIREBASE_API_KEY`, turns on sign-in and saved chats. |
 | `FIREBASE_API_KEY` | None | Public browser key for Firebase Authentication. |
 | `FIREBASE_AUTH_DOMAIN` | `<project>.firebaseapp.com` | Hosts the Google sign-in pop-up. |
 | `WEB_ORIGINS` | None | Web app origins allowed through CORS, comma-separated. |
+| `MIN_ANDROID_VERSION_CODE` | `0` | Android builds below this versionCode must update first. |
 | `HOST` | `127.0.0.1` | Address `npm start` listens on. |
 | `PORT` | `8000` | Port `npm start` listens on. |
 
@@ -83,6 +83,13 @@ keeps its configuration between deploys: `QDRANT_URL`, `FIREBASE_PROJECT_ID`, `F
 `WEB_ORIGINS` (the web app's origins, comma-separated) are plain, the other keys come from Secret
 Manager, and `.env` is not copied into the image.
 
+Before a deploy that breaks older Android builds, ask them to update:
+
+```sh
+gcloud run services update homeoremedica --region asia-south1 --project $P \
+  --update-env-vars MIN_ANDROID_VERSION_CODE=<oldest versionCode that works>
+```
+
 One-time setup of a project `$P` (number `$N`), shared with the web app, after creating it, linking
 billing and adding Firebase:
 
@@ -96,7 +103,7 @@ firebase apps:create ANDROID "HomeoRemedica Android" --package-name com.rasagyav
 # Then turn on Email/Password and Google sign-in in the Firebase console.
 
 # Secrets, read by the default compute service account
-for s in OPENROUTER_API_KEY ZAI_API_KEY QDRANT_API_KEY; do
+for s in OPENROUTER_API_KEY QDRANT_API_KEY; do
   gcloud secrets create $s --data-file=- --project $P   # paste the key, then Ctrl-D
 done
 gcloud projects add-iam-policy-binding $P --role roles/secretmanager.secretAccessor \
@@ -105,7 +112,7 @@ gcloud projects add-iam-policy-binding $P --role roles/secretmanager.secretAcces
 # First deploy
 GCP_PROJECT=$P npm run deploy -- --allow-unauthenticated \
   --set-env-vars "^@^QDRANT_URL=...@FIREBASE_PROJECT_ID=$P@FIREBASE_API_KEY=...@WEB_ORIGINS=https://$P.web.app,https://$P.firebaseapp.com" \
-  --set-secrets OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,ZAI_API_KEY=ZAI_API_KEY:latest,QDRANT_API_KEY=QDRANT_API_KEY:latest
+  --set-secrets OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,QDRANT_API_KEY=QDRANT_API_KEY:latest
 
 # GitHub Actions: only pushes to <branch> may deploy (main for prod, branch for dev)
 gcloud iam workload-identity-pools create github --location global --project $P

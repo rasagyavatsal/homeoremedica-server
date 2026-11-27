@@ -1,6 +1,5 @@
 import {
   type AnswerGenerator,
-  type Cancellable,
   CORPUS_VERSION,
   type ChatOptions,
   type ChatRequest,
@@ -13,15 +12,14 @@ import {
   MAX_GENERATED_ANSWER_CHARS,
   MAX_GENERATION_PROMPT_CHARS,
   MAX_TURN_CHARS,
-  type QuestionKind,
   type Retrieval,
   type Retriever,
 } from './contracts.ts'
 import { shouldCompact } from './conversation.ts'
-import { COMPACTION_INSTRUCTION, NO_SOURCES_ANSWER, SYSTEM_INSTRUCTION, compactionPrompt, generationPrompt } from './generation.ts'
+import { COMPACTION_INSTRUCTION, REPLY_INSTRUCTION, SYSTEM_INSTRUCTION, compactionPrompt, generationPrompt, replyPrompt } from './generation.ts'
 
-/** How many of the books' passages each answer is generated from. */
-export const SOURCE_LIMIT = 5
+/** How many passages of each book an answer is generated from. */
+export const SOURCE_LIMIT = 2
 
 /** Own the complete retrieve-and-generate sequence behind one narrow chat method. */
 export class ChatService {
@@ -54,30 +52,30 @@ export class ChatService {
   }
 
   async chat(request: ChatRequest, { onSources, onText, signal }: ChatOptions = {}): Promise<ChatResponse> {
-    // Condense a nearly full chat while the books are searched. A failure answers from the
-    // context as it was, and the earliest turns are dropped instead.
-    // Stops the compaction when the question fails before its summary is used.
+    // Condense a nearly full chat while the books are searched. When either fails, the other stops
+    // and the question fails with the error that came first.
     const abandoned = new AbortController()
     const stopped = signal ? AbortSignal.any([signal, abandoned.signal]) : abandoned.signal
+    let compactionFailure: unknown
     const compacting = shouldCompact(request)
       ? this.compact(request, { signal: stopped }).catch((error: unknown) => {
-          if (!stopped.aborted) console.error('Compacting a chat failed; answering without it', error)
-          return undefined
+          compactionFailure ??= error
+          abandoned.abort()
+          throw error
         })
       : undefined
+    // A compaction left behind by a failed search is stopped, not awaited.
+    compacting?.catch(() => {})
     let retrieval: Retrieval
     try {
-      // An off-topic question has nothing in the books, so it gets the no-sources answer.
-      retrieval = request.offTopic
-        ? { sources: [], repertory: [], clinical: [] }
-        : await this.#retriever.retrieve(request, { limit: this.#sourceLimit })
+      retrieval = await this.#retriever.retrieve(request, { limit: this.#sourceLimit, signal: stopped })
       // Reject an unusable corpus before paying for an answer.
       if (retrieval.sources.some((source) => source.text.length > MAX_CITATION_TEXT_CHARS)) {
         throw new RangeError('citation text is too long')
       }
     } catch (error) {
       abandoned.abort()
-      throw error
+      throw compactionFailure ?? error
     }
     const { sources } = retrieval
 
@@ -94,28 +92,26 @@ export class ChatService {
     onSources?.(citations)
 
     const compacted = await compacting
-    let generatedAnswer: string
-    if (!sources.length) {
-      // Without evidence the model could only decline, so skip the call.
-      generatedAnswer = NO_SOURCES_ANSWER
-      onText?.(generatedAnswer)
-    } else {
-      let streamed = 0
-      generatedAnswer = (
-        await this.#generator.generate(generationPrompt({ ...request, ...compacted }, retrieval, { maxChars: this.#promptCharLimit }), {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          signal,
-          // Stream no more than the answer limit; the final answer is authoritative.
-          onText:
-            onText &&
-            ((text) => {
-              const piece = text.slice(0, MAX_GENERATED_ANSWER_CHARS - streamed)
-              streamed += piece.length
-              if (piece) onText(piece)
-            }),
-        })
-      ).trim()
-    }
+    // A message the books have nothing on, such as thanks or a question they do not cover, gets a
+    // short reply instead of an answer.
+    const [prompt, systemInstruction] = sources.length
+      ? [generationPrompt({ ...request, ...compacted }, retrieval, { maxChars: this.#promptCharLimit }), SYSTEM_INSTRUCTION]
+      : [replyPrompt(request), REPLY_INSTRUCTION]
+    let streamed = 0
+    let generatedAnswer = (
+      await this.#generator.generate(prompt, {
+        systemInstruction,
+        signal,
+        // Stream no more than the answer limit; the final answer is authoritative.
+        onText:
+          onText &&
+          ((text) => {
+            const piece = text.slice(0, MAX_GENERATED_ANSWER_CHARS - streamed)
+            streamed += piece.length
+            if (piece) onText(piece)
+          }),
+      })
+    ).trim()
     if (generatedAnswer.length > MAX_GENERATED_ANSWER_CHARS) {
       generatedAnswer = `${generatedAnswer.slice(0, MAX_GENERATED_ANSWER_CHARS).trimEnd()}…`
     }
@@ -126,21 +122,6 @@ export class ChatService {
       sources: citations,
       ...(compacted && { compacted }),
     }
-  }
-
-  /** Whether a question describes a patient, decided before its symptoms are read. */
-  kind(request: ChatRequest, options?: Cancellable): Promise<QuestionKind> {
-    return this.#retriever.kind(request, options)
-  }
-
-  /** The symptoms of the case a question describes, for the user to check before it is answered. */
-  symptoms(request: ChatRequest, options?: Cancellable): Promise<string[]> {
-    return this.#retriever.symptoms(request, options)
-  }
-
-  /** The diseases the case a question describes names, for the user to check before it is answered. */
-  diseases(request: ChatRequest, options?: Cancellable): Promise<string[]> {
-    return this.#retriever.diseases(request, options)
   }
 
   /** Condense all but the latest exchange, and any earlier summary, into a new summary. */

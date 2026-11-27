@@ -14,7 +14,6 @@ import { type Settings, buildService, loadAccounts, loadSettings } from './runti
 import {
   type BookCatalog,
   type ChatList,
-  type Cancellable,
   type ChatOptions,
   type ChatRequest,
   ChatRequestSchema,
@@ -25,10 +24,6 @@ import {
   type CompactRequest,
   CompactRequestSchema,
   type CompactResponse,
-  type DiseasesResponse,
-  type KindResponse,
-  type QuestionKind,
-  type SymptomsResponse,
   answerRatings,
   FeedbackSchema,
   SavedChatSchema,
@@ -48,9 +43,6 @@ import {
 export interface ChatHandler {
   chat(request: ChatRequest, options?: ChatOptions): Promise<ChatResponse>
   compact(request: CompactRequest, options?: { signal?: AbortSignal }): Promise<CompactResponse>
-  kind(request: ChatRequest, options?: Cancellable): Promise<QuestionKind>
-  symptoms(request: ChatRequest, options?: Cancellable): Promise<string[]>
-  diseases(request: ChatRequest, options?: Cancellable): Promise<string[]>
 }
 
 export interface AppDependencies {
@@ -59,6 +51,8 @@ export interface AppDependencies {
   getAccounts?: () => Accounts | null
   /** Origins of web pages served elsewhere that may call the API; none means same-origin only. */
   getWebOrigins?: () => readonly string[]
+  /** The oldest Android versionCode the API still serves; 0 or none serves every build. */
+  getMinAndroidVersionCode?: () => number
 }
 
 interface SignedIn {
@@ -93,6 +87,7 @@ export function productionDependencies({
   return {
     getAccounts: () => (accounts ??= loadAccounts(settings())),
     getWebOrigins: () => (webOrigins ??= settings().webOrigins),
+    getMinAndroidVersionCode: () => settings().minAndroidVersionCode,
     getService() {
       // Share one in-flight build between concurrent requests. Conversation state stays in
       // the request and is never shared between browser sessions.
@@ -112,26 +107,11 @@ export function createApp(
   {
     rateLimiter = new RateLimiter(),
     totalRateLimiter = new RateLimiter(TOTAL_CHAT_RATE_LIMITS),
-    kindRateLimiter = new RateLimiter(),
-    totalKindRateLimiter = new RateLimiter(TOTAL_CHAT_RATE_LIMITS),
-    symptomRateLimiter = new RateLimiter(),
-    totalSymptomRateLimiter = new RateLimiter(TOTAL_CHAT_RATE_LIMITS),
-    diseaseRateLimiter = new RateLimiter(),
-    totalDiseaseRateLimiter = new RateLimiter(TOTAL_CHAT_RATE_LIMITS),
     saveRateLimiter = new RateLimiter(CHAT_SAVE_RATE_LIMITS),
     feedbackRateLimiter = new RateLimiter(FEEDBACK_RATE_LIMITS),
   }: {
     rateLimiter?: RateLimiter | null
     totalRateLimiter?: RateLimiter | null
-    /** Counts the questions each client has had sorted into cases and others, apart from its questions. */
-    kindRateLimiter?: RateLimiter | null
-    totalKindRateLimiter?: RateLimiter | null
-    /** Counts the cases each client has read for symptoms, apart from its questions. */
-    symptomRateLimiter?: RateLimiter | null
-    totalSymptomRateLimiter?: RateLimiter | null
-    /** Counts the cases each client has read for diseases, apart from its questions. */
-    diseaseRateLimiter?: RateLimiter | null
-    totalDiseaseRateLimiter?: RateLimiter | null
     /** Counts the messages each user saves. */
     saveRateLimiter?: RateLimiter | null
     /** Counts the ratings each user sends. */
@@ -156,7 +136,12 @@ export function createApp(
 
   app.get('/api/books', (c) => c.json({ books: BOOKS } satisfies BookCatalog))
 
-  app.get('/api/config', (c) => c.json({ auth: dependencies.getAccounts?.()?.config ?? null } satisfies ClientConfig))
+  app.get('/api/config', (c) =>
+    c.json({
+      auth: dependencies.getAccounts?.()?.config ?? null,
+      minAndroidVersionCode: dependencies.getMinAndroidVersionCode?.() ?? 0,
+    } satisfies ClientConfig),
+  )
 
   const signedIn = createMiddleware<SignedIn>(async (c, next) => {
     const accounts = dependencies.getAccounts?.() ?? null
@@ -273,40 +258,6 @@ export function createApp(
   const questionLimits = limited(rateLimiter, totalRateLimiter)
   app.post('/api/chat', questionLimits)
   app.post('/api/chat/compact', questionLimits)
-  // Sorting a question and reading a case for its symptoms and diseases cost a model call each too, but they
-  // come before the same question is asked, so each is counted apart and does not take from the
-  // questions a client may ask.
-  app.post('/api/kind', limited(kindRateLimiter, totalKindRateLimiter))
-  app.post('/api/symptoms', limited(symptomRateLimiter, totalSymptomRateLimiter))
-  app.post('/api/diseases', limited(diseaseRateLimiter, totalDiseaseRateLimiter))
-
-  /**
-   * Answers with what `read` makes of the question, before the question itself is asked. The
-   * request's signal stops the model call when the browser gives up on it.
-   */
-  const beforeAsking = (
-    read: (service: ChatHandler, request: ChatRequest, options: Cancellable) => Promise<KindResponse | SymptomsResponse | DiseasesResponse>,
-  ) =>
-    async (c: Context) => {
-      const request = await readBody(c, ChatRequestSchema)
-      if (request instanceof Response) return request
-
-      let service: ChatHandler
-      try {
-        service = await dependencies.getService()
-      } catch (error) {
-        return setupFailure(c, error, 'Failed to initialize production chat')
-      }
-      try {
-        return c.json(await read(service, request, { signal: c.req.raw.signal }))
-      } catch (error) {
-        const { detail, status } = chatFailure(error)
-        return c.json({ detail }, status)
-      }
-    }
-  app.post('/api/kind', beforeAsking(async (service, request, options) => ({ kind: await service.kind(request, options) })))
-  app.post('/api/symptoms', beforeAsking(async (service, request, options) => ({ symptoms: await service.symptoms(request, options) })))
-  app.post('/api/diseases', beforeAsking(async (service, request, options) => ({ diseases: await service.diseases(request, options) })))
 
   app.post('/api/chat', async (c) => {
     const request = await readBody(c, ChatRequestSchema)
@@ -353,7 +304,7 @@ export function createApp(
     }
 
     try {
-      return c.json(complete(await service.chat(request)))
+      return c.json(complete(await service.chat(request, { signal: c.req.raw.signal })))
     } catch (error) {
       const { detail, status } = chatFailure(error)
       return c.json({ detail }, status)
@@ -437,8 +388,8 @@ function setupFailure(c: Context, error: unknown, logMessage: string) {
     return c.json(
       {
         detail:
-          'The production chat is not configured. Check OPENROUTER_API_KEY, ZAI_API_KEY, ' +
-          'QDRANT_URL and the RAG_ settings in .env, then restart the API.',
+          'The production chat is not configured. Check OPENROUTER_API_KEY, QDRANT_URL ' +
+          'and the RAG_ settings in .env, then restart the API.',
       },
       503,
     )

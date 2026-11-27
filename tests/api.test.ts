@@ -7,13 +7,11 @@ import { RateLimiter } from '../src/rate-limit.ts'
 import type { Settings } from '../src/runtime.ts'
 import type {
   BookSummary,
-  Cancellable,
   ChatOptions,
   ChatRequest,
   ChatResponse,
   CompactRequest,
   CompactResponse,
-  QuestionKind,
 } from '../src/contracts.ts'
 import { ConfigurationError, ProviderError, ProviderTimeoutError, TokenExhaustionError } from '../src/errors.ts'
 
@@ -54,27 +52,6 @@ class StubService implements ChatHandler {
     return response
   }
 
-  /** The signals the reading calls were given, to stop them by. */
-  readonly signals: (AbortSignal | undefined)[] = []
-
-  async kind(_request: ChatRequest, { signal }: Cancellable = {}): Promise<QuestionKind> {
-    this.signals.push(signal)
-    if (this.failure !== null) throw this.failure
-    return 'case'
-  }
-
-  async symptoms(_request: ChatRequest, { signal }: Cancellable = {}): Promise<string[]> {
-    this.signals.push(signal)
-    if (this.failure !== null) throw this.failure
-    return ['Mind: weeping']
-  }
-
-  async diseases(_request: ChatRequest, { signal }: Cancellable = {}): Promise<string[]> {
-    this.signals.push(signal)
-    if (this.failure !== null) throw this.failure
-    return ['sciatica']
-  }
-
   async compact(request: CompactRequest): Promise<CompactResponse> {
     this.compactions.push(request)
     if (this.failure !== null) throw this.failure
@@ -100,12 +77,6 @@ function setup(
     {
       rateLimiter,
       totalRateLimiter,
-      kindRateLimiter: null,
-      totalKindRateLimiter: null,
-      symptomRateLimiter: null,
-      totalSymptomRateLimiter: null,
-      diseaseRateLimiter: null,
-      totalDiseaseRateLimiter: null,
     },
   )
   const post = (body: unknown, headers: Record<string, string> = {}) =>
@@ -135,97 +106,6 @@ const read = (response: Response): Promise<any> => response.json()
 function quiet() {
   vi.spyOn(console, 'error').mockImplementation(() => {})
 }
-
-it('says whether a question describes a case before it is answered', async () => {
-  const { app, service } = setup()
-  const kind = (body: unknown) =>
-    app.request('/api/kind', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-
-  const response = await kind({ message: 'A weepy, thirstless woman.' })
-
-  expect(response.status).toBe(200)
-  expect(await read(response)).toEqual({ kind: 'case' })
-  expect((await kind({ message: ' ' })).status).toBe(422)
-  expect(service.requests).toEqual([])
-
-  quiet()
-  service.failure = new ProviderError('down')
-  expect((await kind({ message: 'A weepy woman.' })).status).toBe(502)
-})
-
-it('reads the symptoms of a case before it is answered', async () => {
-  const { app, service } = setup()
-  const symptoms = (body: unknown) =>
-    app.request('/api/symptoms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-
-  const response = await symptoms({ message: 'A weepy, thirstless woman.' })
-
-  expect(response.status).toBe(200)
-  expect(await read(response)).toEqual({ symptoms: ['Mind: weeping'] })
-  expect((await symptoms({ message: ' ' })).status).toBe(422)
-  expect(service.requests).toEqual([])
-
-  quiet()
-  service.failure = new ProviderError('down')
-  expect((await symptoms({ message: 'A weepy woman.' })).status).toBe(502)
-})
-
-it('reads the diseases of a case before it is answered', async () => {
-  const { app, service } = setup()
-  const diseases = (body: unknown) =>
-    app.request('/api/diseases', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-
-  const response = await diseases({ message: 'Left sciatica, better walking.' })
-
-  expect(response.status).toBe(200)
-  expect(await read(response)).toEqual({ diseases: ['sciatica'] })
-  expect((await diseases({ message: ' ' })).status).toBe(422)
-  expect(service.requests).toEqual([])
-
-  quiet()
-  service.failure = new ProviderError('down')
-  expect((await diseases({ message: 'Left sciatica.' })).status).toBe(502)
-})
-
-it('stops reading a question when its request is given up', async () => {
-  const { app, service } = setup()
-  const stop = new AbortController()
-
-  for (const path of ['/api/kind', '/api/symptoms', '/api/diseases']) {
-    await app.request(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'A weepy woman.' }),
-      signal: stop.signal,
-    })
-  }
-  stop.abort()
-
-  expect(service.signals).toHaveLength(3)
-  expect(service.signals.every((signal) => signal?.aborted)).toBe(true)
-})
-
-it('takes the diseases a user confirmed with a question', async () => {
-  const { service, post } = setup()
-
-  expect((await post({ message: 'Left sciatica.', diseases: [' sciatica ', 'lumbago'] })).status).toBe(200)
-  expect(service.requests[0]?.diseases).toEqual(['sciatica', 'lumbago'])
-
-  expect((await post({ message: 'Left sciatica.', diseases: [' '] })).status).toBe(422)
-  expect((await post({ message: 'Left sciatica.', diseases: Array.from({ length: 16 }, () => 'sciatica') })).status).toBe(422)
-  expect((await post({ message: 'Left sciatica.', diseases: ['x'.repeat(201)] })).status).toBe(422)
-})
-
-it('takes the symptoms a user confirmed with a question', async () => {
-  const { service, post } = setup()
-
-  expect((await post({ message: 'A weepy woman.', symptoms: [' Mind: weeping ', 'Stomach: thirstless'] })).status).toBe(200)
-  expect(service.requests[0]?.symptoms).toEqual(['Mind: weeping', 'Stomach: thirstless'])
-
-  expect((await post({ message: 'A weepy woman.', symptoms: [' '] })).status).toBe(422)
-  expect((await post({ message: 'A weepy woman.', symptoms: Array.from({ length: 16 }, () => 'Mind: weeping') })).status).toBe(422)
-  expect((await post({ message: 'A weepy woman.', symptoms: ['x'.repeat(201)] })).status).toBe(422)
-})
 
 it('health needs neither corpus nor provider configuration', async () => {
   const { app } = setup({ getService: unexpected('health must not initialize chat') })
@@ -477,6 +357,15 @@ describe('compaction', () => {
   })
 })
 
+it('ignores the symptoms and diseases older Android builds send', async () => {
+  const { service, post } = setup()
+
+  const response = await post({ message: 'question', symptoms: ['thirst'], diseases: ['fever'] })
+
+  expect(response.status).toBe(200)
+  expect(service.requests).toEqual([{ message: 'question', history: [] }])
+})
+
 describe('invalid requests are rejected before chat', () => {
   it.each([
     { message: '  ' },
@@ -519,8 +408,8 @@ describe('invalid requests are rejected before chat', () => {
 it.each<[Error, number, string]>([
   [new ProviderTimeoutError('private-secret'), 504, 'The request took too long. Please try again.'],
   [new DOMException('private-secret', 'TimeoutError'), 504, 'The request took too long. Please try again.'],
-  [new ProviderError('private-secret'), 502, 'The chat provider is temporarily unavailable. Please try again shortly.'],
-  [new TokenExhaustionError(), 502, 'Response limit reached. Please try again.'],
+  [new ProviderError('private-secret'), 502, 'HomeoRemedica could not answer just now. Please try again shortly.'],
+  [new TokenExhaustionError(), 502, 'The answer was too long to finish. Try asking about fewer things at once.'],
   [new CorpusError('private-secret'), 500, INTERNAL],
 ])('%s failures have friendly details', async (failure, status, detail) => {
   quiet()
@@ -566,7 +455,7 @@ it('unavailable corpus has a safe, actionable detail', async () => {
 it('missing provider configuration has a safe setup detail', async () => {
   const { post } = setup({
     getService: async () => {
-      throw new ConfigurationError('ZAI_API_KEY is required; private-secret')
+      throw new ConfigurationError('OPENROUTER_API_KEY is required; private-secret')
     },
   })
 
@@ -574,7 +463,7 @@ it('missing provider configuration has a safe setup detail', async () => {
 
   expect(response.status).toBe(503)
   const { detail } = await read(response)
-  expect(detail).toContain('ZAI_API_KEY')
+  expect(detail).toContain('OPENROUTER_API_KEY')
   expect(detail).not.toContain('private-secret')
 })
 
@@ -703,12 +592,12 @@ describe('production dependencies', () => {
     qdrantApiKey: undefined,
     model: 'catalog-model',
     maxOutputTokens: 4_096,
-    zaiApiKey: undefined,
     openrouterApiKey: undefined,
     firebaseProjectId: undefined,
     firebaseApiKey: undefined,
     firebaseAuthDomain: undefined,
     webOrigins: [],
+    minAndroidVersionCode: 0,
   }
 
   it('builds the service once, even for concurrent requests', async () => {
@@ -737,5 +626,12 @@ describe('production dependencies', () => {
     const dependencies = productionDependencies({ settings: () => ({ ...settings, webOrigins: ['https://homeoremedica.com'] }) })
 
     expect(dependencies.getWebOrigins?.()).toEqual(['https://homeoremedica.com'])
+  })
+
+  it('tells the Android app the oldest build the API serves', async () => {
+    const dependencies = productionDependencies({ settings: () => ({ ...settings, minAndroidVersionCode: 42 }) })
+    const response = await createApp({ ...dependencies, getAccounts: () => null }, { rateLimiter: null }).request('/api/config')
+
+    expect(await response.json()).toEqual({ auth: null, minAndroidVersionCode: 42 })
   })
 })
