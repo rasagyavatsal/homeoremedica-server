@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   DecisionCaseClassifier,
   DecisionOpposites,
-  FALLBACK_DECISION_MODEL,
   KIND_CRITERIA,
   DECISION_TIMEOUT_MS,
   MAX_DECISION_QUESTIONS,
@@ -53,30 +52,32 @@ describe('decision opposites', () => {
     expect(opposite.slice(-3)).toEqual([false, false, true])
   })
 
-  it('asks d1.2 when d1.2-ultra is at capacity', async () => {
-    const atCapacity = new Response('model at capacity', { status: 429 })
-    const fetch = fakeFetch(atCapacity, answers(0.9))
+  it('asks d1.2-ultra again, a little later each time, while it is busy', async () => {
+    const waits: number[] = []
+    const sleep = async (ms: number) => void waits.push(ms)
+    const fetch = fakeFetch(new Response('busy', { status: 429 }), new Response('', { status: 503 }), answers(0.9))
 
-    const opposite = await new DecisionOpposites({ apiKey: 'key', fetch }).opposites([{ symptom: 'Thirstless', rubric: 'Stomach: thirst' }])
+    const opposite = await new DecisionOpposites({ apiKey: 'key', fetch, sleep }).opposites([{ symptom: 'Thirstless', rubric: 'Stomach: thirst' }])
 
     expect(opposite).toEqual([true])
-    expect(fetch.calls.map((call) => (call.body as { model: string }).model)).toEqual(['liquid/d1.2-ultra', FALLBACK_DECISION_MODEL])
-    expect(fetch.calls[1]?.body).toMatchObject({ questions: (fetch.calls[0]?.body as { questions: object }).questions })
+    expect(fetch.calls.map((call) => (call.body as { model: string }).model)).toEqual(Array(3).fill('liquid/d1.2-ultra'))
+    expect(waits).toEqual([1_000, 2_000])
   })
 
-  it('fails when d1.2 is at capacity too, and only asks d1.2 for a 429', async () => {
-    const twice = fakeFetch(new Response('', { status: 429 }), new Response('provider secret', { status: 429 }))
-    const once = fakeFetch(new Response('provider secret', { status: 503 }))
+  it('fails after three busy replies, and at once for a request it rejects', async () => {
+    const sleep = async () => {}
+    const busy = fakeFetch(...Array.from({ length: 3 }, () => new Response('provider secret', { status: 429 })))
+    const rejected = fakeFetch(new Response('provider secret', { status: 400 }))
     const pair = [{ symptom: 'Thirstless', rubric: 'Stomach: thirst' }]
 
-    await expect(new DecisionOpposites({ apiKey: 'key', fetch: twice }).opposites(pair)).rejects.toThrow(/status 429/)
-    await expect(new DecisionOpposites({ apiKey: 'key', fetch: once }).opposites(pair)).rejects.toThrow(/status 503/)
-    expect(twice.calls).toHaveLength(2)
-    expect(once.calls).toHaveLength(1)
+    await expect(new DecisionOpposites({ apiKey: 'key', fetch: busy, sleep }).opposites(pair)).rejects.toThrow(/status 429/)
+    await expect(new DecisionOpposites({ apiKey: 'key', fetch: rejected, sleep }).opposites(pair)).rejects.toThrow(/status 400/)
+    expect(busy.calls).toHaveLength(3)
+    expect(rejected.calls).toHaveLength(1)
   })
 
   it.each([
-    [new Response('provider secret', { status: 500 }), /status 500/],
+    [new Response('provider secret', { status: 400 }), /status 400/],
     [json({ answers: { q0: { type: 'noul' } } }), /no answer/],
   ])('fails without the response body when the model gives no answer', async (response, message) => {
     const error = await new DecisionOpposites({ apiKey: 'key', fetch: fakeFetch(response) })
@@ -111,7 +112,7 @@ describe('decision case classifier', () => {
   })
 
   it.each([
-    ['fails', new Response('provider secret', { status: 500 })],
+    ['fails', new Response('provider secret', { status: 400 })],
     ['gives no choice', json({ answers: { q0: { type: 'choice' } } })],
     ['chooses another kind', choice('remedy')],
   ])('fails when the decision model %s', async (_, response) => {

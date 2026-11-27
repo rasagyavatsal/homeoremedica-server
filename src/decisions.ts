@@ -1,30 +1,23 @@
 /** Decisions from a decision model through OpenRouter: a question's kind and the rubrics that oppose a case's symptoms. */
 
 import { type Cancellable, type QuestionKind } from './contracts.ts'
-import { ConfigurationError, ProviderError } from './errors.ts'
+import { ConfigurationError, ProviderError, ProviderTimeoutError } from './errors.ts'
 import { DEFAULT_OPENROUTER_BASE_URL } from './embeddings.ts'
-import { type Fetch, isRecord, readJson, send } from './http.ts'
+import { type Fetch, INITIAL_BACKOFF_MS, MAX_ATTEMPTS, RETRYABLE_STATUS_CODES, delay, isRecord, readJson, send } from './http.ts'
 import type { CaseClassifier } from './repertory.ts'
 
 /**
  * Liquid's d1.2-ultra removed fewer rubrics than Baseten's bison-1 on 19 cured cases, more of them
- * rightly, at under a third of the cost.
+ * rightly, at under a third of the cost. Liquid's d1.2 missed opposites that it found, and took a
+ * question for a case, at the same speed.
  */
 export const DECISION_MODEL = 'liquid/d1.2-ultra'
-/**
- * Asked when d1.2-ultra is at capacity, which it often is. Liquid's d1.2 sorted the same 56 test
- * questions rightly and removed fewer rubrics, all rightly, at half the cost.
- */
-export const FALLBACK_DECISION_MODEL = 'liquid/d1.2'
 /** A rubric is the opposite of its symptom from this probability. */
 export const OPPOSITE_CUTOFF = 0.7
 /** d1.2-ultra answers at most 128 questions a request. */
 export const MAX_DECISION_QUESTIONS = 100
 export const DECISION_TIMEOUT_MS = 15_000
-/**
- * Each attempt to sort a question, as long as a rewrite may take: the books are not searched until it
- * answers, and a busy model would otherwise hold the answer up for two full DECISION_TIMEOUT_MS.
- */
+/** Each attempt to sort a question, as long as a rewrite may take: the books are not searched until it answers. */
 export const SORT_TIMEOUT_MS = 8_000
 const LABEL = 'OpenRouter decision'
 
@@ -52,6 +45,7 @@ interface DecisionOptions {
   baseUrl?: string
   fetch?: Fetch
   timeoutMs?: number
+  sleep?: (ms: number) => Promise<void>
 }
 
 /** OpenRouter's Decisions API. */
@@ -60,8 +54,15 @@ class Decisions {
   readonly #headers: Record<string, string>
   readonly #fetch: Fetch
   readonly #timeoutMs: number
+  readonly #sleep: (ms: number) => Promise<void>
 
-  constructor({ apiKey, baseUrl = DEFAULT_OPENROUTER_BASE_URL, fetch: fetchImpl = fetch, timeoutMs = DECISION_TIMEOUT_MS }: DecisionOptions) {
+  constructor({
+    apiKey,
+    baseUrl = DEFAULT_OPENROUTER_BASE_URL,
+    fetch: fetchImpl = fetch,
+    timeoutMs = DECISION_TIMEOUT_MS,
+    sleep = delay,
+  }: DecisionOptions) {
     if (!apiKey) {
       throw new ConfigurationError(
         'an OpenRouter API key is required; set OPENROUTER_API_KEY in the environment or .env',
@@ -72,6 +73,7 @@ class Decisions {
     this.#headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
     this.#fetch = fetchImpl
     this.#timeoutMs = timeoutMs
+    this.#sleep = sleep
   }
 
   /** Each question's answer, in the order asked, in requests of at most MAX_DECISION_QUESTIONS sent together. */
@@ -83,29 +85,26 @@ class Decisions {
     return (await Promise.all(batches.map((batch) => this.#request(state, batch, signal)))).flat()
   }
 
-  /** From DECISION_MODEL or, when it is at capacity, FALLBACK_DECISION_MODEL. */
+  /** From DECISION_MODEL, asked again a little later while it is busy or failing, as embeddings are. */
   async #request(state: string, questions: readonly object[], signal?: AbortSignal): Promise<Record<string, unknown>[]> {
-    const ask = (model: string) =>
-      send(
-        this.#fetch,
-        this.#url,
-        {
-          method: 'POST',
-          headers: this.#headers,
-          body: JSON.stringify({
-            model,
-            state,
-            questions: Object.fromEntries(questions.map((question, index) => [`q${index}`, question])),
-          }),
-        },
-        { label: LABEL, timeoutMs: this.#timeoutMs, signal },
-      )
-    let response = await ask(DECISION_MODEL)
-    if (response.status === 429) {
+    const body = JSON.stringify({
+      model: DECISION_MODEL,
+      state,
+      questions: Object.fromEntries(questions.map((question, index) => [`q${index}`, question])),
+    })
+    let backoff = INITIAL_BACKOFF_MS
+    let response: Response
+    for (let attempt = 1; ; attempt++) {
+      response = await send(this.#fetch, this.#url, { method: 'POST', headers: this.#headers, body }, { label: LABEL, timeoutMs: this.#timeoutMs, signal })
+      if (response.ok) break
       await response.body?.cancel()
-      response = await ask(FALLBACK_DECISION_MODEL)
+      if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt === MAX_ATTEMPTS) {
+        if (response.status === 408 || response.status === 504) throw new ProviderTimeoutError(`${LABEL} request timed out`)
+        throw new ProviderError(`${LABEL} request failed with status ${response.status}`)
+      }
+      await this.#sleep(backoff)
+      backoff *= 2
     }
-    if (!response.ok) throw new ProviderError(`${LABEL} request failed with status ${response.status}`)
     const parsed = await readJson(response, LABEL)
     const answers = isRecord(parsed) ? parsed.answers : undefined
     return questions.map((_, index) => {

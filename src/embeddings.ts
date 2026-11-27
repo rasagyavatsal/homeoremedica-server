@@ -2,18 +2,13 @@
 
 import type { Cancellable } from './contracts.ts'
 import { ConfigurationError, ProviderError, ProviderTimeoutError } from './errors.ts'
-import { type Fetch, isRecord, readJson, send } from './http.ts'
+import { type Fetch, INITIAL_BACKOFF_MS, MAX_ATTEMPTS, RETRYABLE_STATUS_CODES, delay, isRecord, readJson, send } from './http.ts'
 
 export const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
 export const VOYAGE_EMBEDDING_MODEL = 'voyageai/voyage-4'
 export const VOYAGE_DIMENSIONS = 1024
 
-const RETRYABLE_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504])
-const MAX_ATTEMPTS = 3
-const INITIAL_BACKOFF_MS = 1_000
 const LABEL = 'OpenRouter embedding'
-
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /** Embed search queries to match the collection's voyage-4 document vectors. */
 export class VoyageQueryEmbedder {
